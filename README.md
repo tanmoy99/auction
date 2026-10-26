@@ -1,36 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CricAuction
 
-## Getting Started
+Live player auctions for local cricket tournaments.
 
-First, run the development server:
+- **Organisers** create tournaments, add players (manually, Excel/CSV, Google Sheet, Google Form or a registration link), add teams with a purse, and run the auction.
+- **Team owners** log in on their phone and tap to bid. The highest bid when the auctioneer closes wins the player.
+- **Big screen** (`/live/<id>`) for a projector or YouTube stream, and a public **squads** page (`/squads/<id>`).
+
+Built with Next.js 16 + Tailwind CSS and Supabase (database, login, realtime, photo storage). It runs on the free tiers of Supabase and Vercel.
+
+---
+
+## 1. Create the Supabase project (free, about 5 minutes)
+
+1. Sign up at https://supabase.com, then click **New project**. Pick the **Mumbai (ap-south-1)** region for India, and save the database password somewhere safe.
+2. Open **SQL Editor → New query**, paste the whole of [`supabase/schema.sql`](supabase/schema.sql) and click **Run**. You should see "Success".
+3. Go to **Authentication → Sign In / Providers → Email** and turn **off** "Confirm email". This makes testing easier. You can turn it back on later.
+4. Go to **Project Settings → API Keys** and copy:
+   - the Project URL
+   - the `anon` / publishable key
+   - the `service_role` / secret key
+
+## 2. Run it on your computer
 
 ```bash
+cd cricket-auction
+cp .env.example .env.local     # on Windows PowerShell: copy .env.example .env.local
+# open .env.local and paste the 3 values
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000, click **Get started** and create your organiser account.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+To test bidding from phones on the same Wi-Fi, open `http://<your-PC-IP>:3000` on the phone. Find the IP with `ipconfig`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 3. Run a test auction
 
-## Learn More
+1. **New tournament**: set the budget (e.g. Rs 50,000), base price Rs 500, and squad size.
+2. **Teams** tab: add teams, then **Create owner login** for each one and send the login details on WhatsApp.
+3. **Players** tab: **Import** an Excel file (use the **Template** button) or add players by hand.
+   **Registration** tab: share the link so players can register themselves. Approve them in Players.
+4. **Live auction** tab: click **Next random player** (or **Start** on a player). Owners bid from `/login` on their phones.
+   Open **Big screen** on the projector. Click **Sold** to give the player to the highest bidder.
 
-To learn more about Next.js, take a look at the following resources:
+### Auction rules built in
+- Bid increments by slab (default: +500 up to Rs 5,000, +1,000 up to Rs 20,000, then +2,000). Change these in Settings.
+- Timer resets after every bid (default 30s, 0 = no timer).
+- A team can't bid more than its purse minus the money needed to fill its **minimum squad** at base price.
+- Max squad size is enforced.
+- If two owners tap at the same moment, the database accepts only one bid for each amount.
+- Undo a sale from the Players list. Assign icon or captain players directly with the shield button.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 4. Deploy to Vercel (free)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Push this folder to a GitHub repository.
+2. At https://vercel.com: **Add New → Project**, then import the repo.
+3. Add the same 3 environment variables (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`), then click **Deploy**.
+4. In Supabase, open **Authentication → URL Configuration** and set **Site URL** to your Vercel address.
+5. Now the **Google Form** option works: in the Registration tab, copy the Apps Script and follow the steps there.
 
-## Deploy on Vercel
+The free plans are fine for testing and for running your own tournaments. Vercel Hobby is for non-commercial use only, so if you charge organisers you need Vercel Pro. A free Supabase project pauses after 7 days with no activity; open the dashboard and click **Restore** to wake it.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Project layout
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+supabase/schema.sql          tables, security rules, auction functions (bidding logic lives here)
+src/lib/                     supabase clients, live-data hooks, formatting, Excel/Form field mapping
+src/components/              UI kit, auction stage, toasts
+src/app/dashboard            organiser's tournaments
+src/app/t/[id]/...           tournament admin: overview, players, teams, live auction, registration, settings
+src/app/bid/[id]             team owner bidding screen (phone)
+src/app/live/[id]            big screen display (public)
+src/app/squads/[id]          squads + Excel download (public)
+src/app/register/[token]     public player registration form
+src/app/api/                 owner login creation, registration webhook, Google Sheet import
+```
