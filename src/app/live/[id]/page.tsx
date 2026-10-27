@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useParams } from "next/navigation";
 import { Gavel, Maximize } from "lucide-react";
 import { BidHistory, Countdown, PlayerDetails } from "@/components/auction";
+import { UpNext } from "@/components/player-board";
 import { Avatar, Spinner, TeamDot, cn } from "@/components/ui";
 import { rupees } from "@/lib/format";
 import { useAuctionDriver, useServerOffset, useTournamentLive } from "@/lib/hooks";
@@ -111,6 +112,9 @@ export default function LiveScreen() {
             <div className="hidden rounded-2xl bg-white/5 p-4 ring-1 ring-white/10 lg:block">
               <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-white/50">Bids</p>
               <BidHistory bids={bids.slice(0, 8)} teams={teams} dark />
+              <div className="mt-4">
+                <UpNext players={players} state={state} dark />
+              </div>
             </div>
           </div>
         ) : (

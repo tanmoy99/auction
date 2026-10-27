@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Ban, Gavel, Pause, Play, RotateCcw, Search, Shuffle, Wifi, WifiOff, X } from "lucide-react";
+import { Ban, ChevronsRight, Gavel, Pause, Play, RotateCcw, Search, Shuffle, Wifi, WifiOff, X } from "lucide-react";
 import { BidHistory, PlayerStage, TimerHint } from "@/components/auction";
+import { UpNext, upNext } from "@/components/player-board";
 import { useTournament } from "@/components/tournament-context";
 import { toast } from "@/components/toast";
 import { Avatar, Button, Card, Input, TeamDot, cn } from "@/components/ui";
@@ -51,6 +52,7 @@ export default function AuctionControlPage() {
     return counts;
   }, [players]);
 
+  const next = upNext(players, state);
   const available = players.filter((p) => p.status === "available");
   const unsold = players.filter((p) => p.status === "unsold");
   const queue = (queueTab === "available" ? available : unsold).filter((p) => p.name.toLowerCase().includes(query.trim().toLowerCase()));
@@ -67,11 +69,15 @@ export default function AuctionControlPage() {
   const start = (p: Player) => call(`start-${p.id}`, "start_player", { p_tournament: t.id, p_player: p.id });
   const close = () => call("close", "close_player", { p_tournament: t.id });
 
-  function startRandom() {
+  function startNext() {
+    if (next) return start(next);
     const pool = available.length ? available : unsold;
     if (!pool.length) return toast("No players left in the pool", "info");
     start(pickRandom(pool));
   }
+
+  const setNext = (p: Player | null) =>
+    call(p ? `next-${p.id}` : "shuffle", "set_next_player", { p_tournament: t.id, p_player: p?.id ?? null }, p ? `${p.name} is up next` : undefined);
 
   async function setAuto(values: Partial<Pick<typeof t, "auto_close" | "auto_next">>) {
     const { error } = await supabase.from("tournaments").update(values).eq("id", t.id);
@@ -106,6 +112,16 @@ export default function AuctionControlPage() {
           timerSeconds={t.bid_timer_seconds}
           idleText="Pick a player from the queue or bring a random one to start bidding"
         />
+
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <UpNext players={players} state={state} />
+          </div>
+          <Button variant="secondary" onClick={() => setNext(null)} loading={busy === "shuffle"} disabled={available.length < 2} title="Pick a different random player">
+            <Shuffle className="size-4" />
+            <span className="hidden sm:inline">Shuffle</span>
+          </Button>
+        </div>
 
         <Card className="p-4">
           {bidding ? (
@@ -142,9 +158,15 @@ export default function AuctionControlPage() {
             </>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="lg" className="flex-1" onClick={startRandom} disabled={!available.length && !unsold.length} loading={busy?.startsWith("start")}>
+              <Button size="lg" className="flex-1" onClick={startNext} disabled={!available.length && !unsold.length} loading={busy?.startsWith("start")}>
                 <Shuffle className="size-5" />
-                {nextIn != null ? `Next player in ${Math.ceil(nextIn)}s · bring now` : state?.phase === "idle" ? "Start auction · random player" : "Next random player"}
+                {nextIn != null
+                  ? `${next?.name ?? "Next player"} in ${Math.ceil(nextIn)}s · bring now`
+                  : next
+                    ? `${state?.phase === "idle" ? "Start auction with" : "Bring"} ${next.name}`
+                    : state?.phase === "idle"
+                      ? "Start auction · random player"
+                      : "Next random player"}
               </Button>
               {nextIn != null && (
                 <Button size="lg" variant="secondary" onClick={() => setAuto({ auto_next: false })}>
@@ -172,7 +194,7 @@ export default function AuctionControlPage() {
             <Toggle
               checked={t.auto_next}
               onChange={(v) => setAuto({ auto_next: v })}
-              label={`Bring the next random player automatically ${t.result_pause_seconds}s after SOLD / UNSOLD`}
+              label={`Bring the "up next" player automatically ${t.result_pause_seconds}s after SOLD / UNSOLD`}
             />
             <p className="text-xs text-slate-400">Automatic steps keep running even if this page is closed, as long as any auction screen is open.</p>
           </div>
@@ -236,6 +258,13 @@ export default function AuctionControlPage() {
                   <p className="truncate text-xs text-slate-500">{[p.role, p.city, p.category].filter(Boolean).join(" · ")}</p>
                 </div>
                 <span className="text-xs text-slate-500">{rupees(p.base_price)}</span>
+                {p.id === next?.id ? (
+                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">Next</span>
+                ) : (
+                  <Button size="sm" variant="ghost" onClick={() => setNext(p)} loading={busy === `next-${p.id}`} title="Make this player up next">
+                    <ChevronsRight className="size-3.5" /> Next
+                  </Button>
+                )}
                 <Button size="sm" variant="secondary" disabled={bidding} loading={busy === `start-${p.id}`} onClick={() => start(p)}>
                   <Play className="size-3.5" /> Start
                 </Button>

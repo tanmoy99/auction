@@ -70,7 +70,7 @@ async function main() {
   const owners = {};
   for (const k of ["a", "b", "c", "d"]) owners[k] = await makeUser(`owner-${k}`, "owner");
 
-  let t, t2, teams, players;
+  let t, t2, t3, teams, players;
   const db = org.client;
   const rpc = (client, fn, args) => client.rpc(fn, args);
   const state = async () => ok(admin.from("auction_state").select("*").eq("tournament_id", t.id).single());
@@ -502,8 +502,44 @@ async function main() {
         assert(res.ok, await res.text());
       });
     }
+
+    console.log("\nUp next (needs migration 005)");
+    t3 = await ok(db.from("tournaments").insert({ name: `TEST3 ${RUN}`, bid_timer_seconds: 0, result_pause_seconds: 2 }).select().single());
+    const [N1] = await ok(db.from("teams").insert({ tournament_id: t3.id, name: "Team N", purse: 10000, owner_user_id: owners.b.user.id }).select());
+    const [R1, R2, R3] = await ok(db.from("players").insert([1, 2, 3].map((i) => ({ tournament_id: t3.id, name: `R${i}`, base_price: 500 }))).select());
+    const state3 = async () => ok(admin.from("auction_state").select("*").eq("tournament_id", t3.id).single());
+
+    await test("starting a player also picks who is up next (never the one on stage)", async () => {
+      await ok(rpc(db, "start_player", { p_tournament: t3.id, p_player: R1.id }));
+      const s = await state3();
+      assert(s.next_player_id && s.next_player_id !== R1.id, JSON.stringify(s));
+    });
+    await test("team owners cannot change who is next", () =>
+      fails(rpc(owners.b.client, "set_next_player", { p_tournament: t3.id, p_player: R3.id }), /organiser/i));
+    await test("organiser can choose the next player, but not the one on stage", async () => {
+      await ok(rpc(db, "set_next_player", { p_tournament: t3.id, p_player: R3.id }));
+      assert((await state3()).next_player_id === R3.id, "next not set");
+      await fails(rpc(db, "set_next_player", { p_tournament: t3.id, p_player: R1.id }), /not available/i);
+    });
+    await test("after SOLD, the automatic flow brings the chosen next player and picks a new one", async () => {
+      await ok(rpc(owners.b.client, "place_bid", { p_tournament: t3.id, p_amount: 500 }));
+      await ok(rpc(db, "close_player", { p_tournament: t3.id }));
+      await sleep(2500);
+      await ok(rpc(anon, "auction_tick", { p_tournament: t3.id }));
+      const s = await state3();
+      assert(s.phase === "bidding" && s.player_id === R3.id && s.next_player_id === R2.id, JSON.stringify(s));
+    });
+    await test("when the last player is on stage there is no next, and the auction ends idle", async () => {
+      await ok(rpc(db, "close_player", { p_tournament: t3.id }));
+      await ok(rpc(db, "start_player", { p_tournament: t3.id, p_player: R2.id }));
+      assert((await state3()).next_player_id === null, "next should be empty");
+      await ok(rpc(db, "close_player", { p_tournament: t3.id }));
+      await sleep(2500);
+      assert((await ok(rpc(anon, "auction_tick", { p_tournament: t3.id }))) === "idle", "should be idle");
+    });
   } finally {
     console.log("\nCleaning up test data...");
+    if (t3) await admin.from("tournaments").delete().eq("id", t3.id);
     const { data: extra } = await admin.from("teams").select("owner_user_id").eq("owner_login", `adm${RUN}`);
     for (const row of extra ?? []) if (row.owner_user_id) createdUsers.push(row.owner_user_id);
     if (t2) await admin.from("tournaments").delete().eq("id", t2.id);

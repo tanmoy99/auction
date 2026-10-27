@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Gavel, LogOut, Wifi, WifiOff } from "lucide-react";
 import { BidHistory, PlayerStage } from "@/components/auction";
+import { PlayerBoard, UpNext } from "@/components/player-board";
 import { toast } from "@/components/toast";
 import { Avatar, Card, EmptyState, PageLoader, TeamDot, cn } from "@/components/ui";
 import { bidStep, errorMessage, maxBid, nextBid, rupees } from "@/lib/format";
@@ -18,7 +19,7 @@ export default function BidPage() {
   const offset = useServerOffset();
   useAuctionDriver(t, state, offset);
   const [placing, setPlacing] = useState(false);
-  const [tab, setTab] = useState<"bids" | "squad">("bids");
+  const [tab, setTab] = useState<"bids" | "players" | "squad">("bids");
 
   useEffect(() => {
     if (!userLoading && !user) router.replace("/login");
@@ -103,21 +104,24 @@ export default function BidPage() {
           </div>
         )}
         <PlayerStage state={state} player={current} teams={teams} offset={offset} timerSeconds={t.bid_timer_seconds} />
+        <UpNext players={players} state={state} />
 
         <Card>
           <div className="flex border-b border-slate-100 text-sm">
-            {(["bids", "squad"] as const).map((x) => (
+            {(["bids", "players", "squad"] as const).map((x) => (
               <button
                 key={x}
                 onClick={() => setTab(x)}
                 className={cn("flex-1 py-2.5 font-medium", tab === x ? "border-b-2 border-emerald-600 text-emerald-700" : "text-slate-500")}
               >
-                {x === "bids" ? "Live bids" : `My squad (${mySquad.length})`}
+                {x === "bids" ? "Live bids" : x === "players" ? "Players" : `My squad (${mySquad.length})`}
               </button>
             ))}
           </div>
-          <div className="max-h-80 overflow-y-auto p-2">
-            {tab === "bids" ? (
+          <div className={cn("overflow-y-auto", tab === "players" ? "max-h-[32rem]" : "max-h-80 p-2")}>
+            {tab === "players" ? (
+              <PlayerBoard players={players} teams={teams} state={state} myTeamId={myTeam.id} />
+            ) : tab === "bids" ? (
               <BidHistory bids={bids} teams={teams} />
             ) : mySquad.length === 0 ? (
               <p className="py-4 text-center text-sm text-slate-400">No players yet</p>

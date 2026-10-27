@@ -66,6 +66,7 @@ export type AuctionState = {
   leading_team_id: string | null;
   phase: "idle" | "bidding" | "sold" | "unsold";
   ends_at: string | null;
+  next_player_id: string | null;
   updated_at: string;
 };
 
