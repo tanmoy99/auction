@@ -123,11 +123,14 @@ function onFormSubmit(e) {
           </li>
           <li>Submit a test response - it appears in Players as Pending.</li>
         </ol>
-        <div className="relative mt-4">
-          <pre className="max-h-64 overflow-auto rounded-lg bg-slate-900 p-4 text-xs leading-relaxed text-slate-100">{script}</pre>
-          <Button size="sm" variant="secondary" className="absolute right-2 top-2" onClick={() => copy(script)}>
-            <Copy className="size-4" /> Copy
-          </Button>
+        <div className="mt-4 overflow-hidden rounded-lg bg-slate-900">
+          <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
+            <span className="text-xs font-medium text-slate-400">Apps Script code</span>
+            <Button size="sm" variant="secondary" onClick={() => copy(script)}>
+              <Copy className="size-4" /> Copy code
+            </Button>
+          </div>
+          <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-all p-4 text-xs leading-relaxed text-slate-100">{script}</pre>
         </div>
         <p className="mt-3 text-xs text-slate-500">
           Photo uploads in Google Forms are saved to Drive. To show them, share the upload folder as &quot;Anyone with the link can view&quot;.
