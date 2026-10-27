@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
-import { ArrowLeft, ExternalLink, MonitorPlay } from "lucide-react";
+import { ArrowLeft, ExternalLink, MonitorPlay, PauseCircle, ShieldCheck } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
 import { TournamentContext } from "@/components/tournament-context";
 import { EmptyState, PageLoader, cn } from "@/components/ui";
@@ -11,7 +11,7 @@ import { useRequireOrganiser, useTournamentLive } from "@/lib/hooks";
 export function TournamentShell({ children }: { children: React.ReactNode }) {
   const { id } = useParams<{ id: string }>();
   const pathname = usePathname();
-  const { user, ready } = useRequireOrganiser();
+  const { user, access, ready } = useRequireOrganiser();
   const live = useTournamentLive(ready ? id : undefined);
   const { tournament, players } = live;
 
@@ -27,10 +27,25 @@ export function TournamentShell({ children }: { children: React.ReactNode }) {
 
   let body: React.ReactNode;
   if (!ready || live.loading) body = <PageLoader />;
-  else if (!tournament || tournament.organiser_id !== user?.id)
+  else if (!tournament || (tournament.organiser_id !== user?.id && !access?.is_admin))
     body = (
       <div className="mx-auto max-w-6xl px-4 py-10">
         <EmptyState icon={<ArrowLeft className="size-6" />} title="Tournament not found" text="It may have been deleted, or it belongs to another organiser." />
+      </div>
+    );
+  else if (!access?.is_admin && (!access?.active || tournament.suspended))
+    body = (
+      <div className="mx-auto max-w-6xl px-4 py-10">
+        <EmptyState
+          icon={<PauseCircle className="size-6" />}
+          title={tournament.suspended ? "This tournament is paused" : "Your account is paused"}
+          text={`${(tournament.suspended ? tournament.suspended_reason : access?.suspended_reason) || "The site admin has paused access."} Please contact the site admin to continue.`}
+          action={
+            <Link href="/dashboard" className="text-sm font-medium text-emerald-700 hover:underline">
+              Back to my tournaments
+            </Link>
+          }
+        />
       </div>
     );
   else
@@ -38,11 +53,26 @@ export function TournamentShell({ children }: { children: React.ReactNode }) {
       <TournamentContext.Provider value={{ ...live, tournament }}>
         <div className="border-b border-slate-200 bg-white">
           <div className="mx-auto max-w-6xl px-4 pt-5">
-            <Link href="/dashboard" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
-              <ArrowLeft className="size-4" /> All tournaments
+            <Link
+              href={tournament.organiser_id === user?.id ? "/dashboard" : "/admin"}
+              className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
+            >
+              <ArrowLeft className="size-4" /> {tournament.organiser_id === user?.id ? "All tournaments" : "Admin dashboard"}
             </Link>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-              <h1 className="text-2xl font-bold text-slate-900">{tournament.name}</h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-2xl font-bold text-slate-900">{tournament.name}</h1>
+                {tournament.organiser_id !== user?.id && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">
+                    <ShieldCheck className="size-3.5" /> Admin view
+                  </span>
+                )}
+                {tournament.suspended && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                    <PauseCircle className="size-3.5" /> Paused
+                  </span>
+                )}
+              </div>
               <div className="flex gap-2">
                 <a
                   href={`/live/${id}`}

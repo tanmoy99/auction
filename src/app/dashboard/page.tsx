@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CalendarDays, MapPin, Plus, Trophy, Users, UserRound } from "lucide-react";
+import { CalendarDays, MapPin, PauseCircle, Plus, Trophy, Users, UserRound } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
 import { toast } from "@/components/toast";
 import { Button, Card, EmptyState, Field, Input, Modal, PageLoader, cn } from "@/components/ui";
@@ -21,7 +21,8 @@ const statusLabel = {
 };
 
 export default function DashboardPage() {
-  const { user, ready } = useRequireOrganiser();
+  const { user, access, ready } = useRequireOrganiser();
+  const paused = !!access && !access.active;
   const [rows, setRows] = useState<Row[] | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -44,10 +45,26 @@ export default function DashboardPage() {
             <h1 className="text-2xl font-bold text-slate-900">My tournaments</h1>
             <p className="text-sm text-slate-500">Create a tournament, then add players and teams.</p>
           </div>
-          <Button onClick={() => setCreating(true)}>
+          <Button onClick={() => setCreating(true)} disabled={paused}>
             <Plus className="size-4" /> New tournament
           </Button>
         </div>
+
+        {paused && (
+          <div className="mb-6 flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <PauseCircle className="size-5 shrink-0 text-amber-600" />
+            <div>
+              <p className="font-semibold">Your account is paused</p>
+              <p className="mt-0.5">
+                {access.suspended_reason ||
+                  (access.access_until && !access.suspended
+                    ? `Your access ended on ${new Date(access.access_until).toLocaleDateString("en-IN", { dateStyle: "medium" })}.`
+                    : "The site admin has paused access.")}{" "}
+                You can&apos;t create or run tournaments until the site admin turns it back on.
+              </p>
+            </div>
+          </div>
+        )}
 
         {!rows ? (
           <PageLoader />
@@ -57,7 +74,7 @@ export default function DashboardPage() {
             title="No tournaments yet"
             text="Create your first tournament to start registering players and teams."
             action={
-              <Button onClick={() => setCreating(true)}>
+              <Button onClick={() => setCreating(true)} disabled={paused}>
                 <Plus className="size-4" /> New tournament
               </Button>
             }
@@ -69,9 +86,13 @@ export default function DashboardPage() {
                 <Card className="h-full p-5 transition hover:border-emerald-300 hover:shadow-md">
                   <div className="flex items-start justify-between gap-2">
                     <h2 className="font-semibold text-slate-900">{t.name}</h2>
-                    <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium", statusLabel[t.status].cls)}>
-                      {statusLabel[t.status].text}
-                    </span>
+                    {t.suspended ? (
+                      <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Paused</span>
+                    ) : (
+                      <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium", statusLabel[t.status].cls)}>
+                        {statusLabel[t.status].text}
+                      </span>
+                    )}
                   </div>
                   <div className="mt-3 space-y-1.5 text-sm text-slate-500">
                     {t.venue && (

@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Gavel, LogOut } from "lucide-react";
+import { Gavel, LogOut, ShieldCheck } from "lucide-react";
 import { APP_NAME } from "@/lib/config";
-import { useUser } from "@/lib/hooks";
+import { useAccess, useUser } from "@/lib/hooks";
 import { supabase } from "@/lib/supabase";
 import { Button, cn } from "./ui";
 
@@ -21,6 +21,7 @@ export function Logo({ dark }: { dark?: boolean }) {
 
 export function AppHeader({ children }: { children?: React.ReactNode }) {
   const { user, isOwner } = useUser();
+  const access = useAccess(isOwner ? null : user);
   const router = useRouter();
 
   async function signOut() {
@@ -36,6 +37,11 @@ export function AppHeader({ children }: { children?: React.ReactNode }) {
           {children}
           {user ? (
             <>
+              {access?.is_admin && (
+                <Link href="/admin" className="flex items-center gap-1 text-sm font-medium text-violet-700 hover:text-violet-900">
+                  <ShieldCheck className="size-4" /> Admin
+                </Link>
+              )}
               <Link href={isOwner ? "/owner" : "/dashboard"} className="hidden text-sm font-medium text-slate-600 hover:text-slate-900 sm:block">
                 {isOwner ? "My team" : "My tournaments"}
               </Link>

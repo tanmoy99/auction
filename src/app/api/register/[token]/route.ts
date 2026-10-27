@@ -12,11 +12,11 @@ export async function POST(req: Request, ctx: RouteContext<"/api/register/[token
   const admin = supabaseAdmin();
   const { data: tournament } = await admin
     .from("tournaments")
-    .select("id, base_price, registration_open")
+    .select("id, base_price, registration_open, suspended")
     .eq("registration_token", token)
     .maybeSingle();
   if (!tournament) return Response.json({ error: "Invalid registration link" }, { status: 404 });
-  if (!tournament.registration_open) return Response.json({ error: "Registration is closed" }, { status: 403 });
+  if (!tournament.registration_open || tournament.suspended) return Response.json({ error: "Registration is closed" }, { status: 403 });
 
   const record: Record<string, unknown> = {};
   let photo: File | null = null;

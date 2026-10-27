@@ -53,7 +53,8 @@ export default function BidPage() {
   const timeUp = left != null && left <= 0;
 
   let blocked: string | null = null;
-  if (!bidding) blocked = "Waiting for next player";
+  if (t.suspended) blocked = "Auction paused by the admin";
+  else if (!bidding) blocked = "Waiting for next player";
   else if (leading) blocked = "You are the highest bidder";
   else if (squadFull) blocked = "Your squad is full";
   else if (timeUp) blocked = "Time is up";
@@ -96,6 +97,11 @@ export default function BidPage() {
       </header>
 
       <main className="mx-auto w-full max-w-xl space-y-4 px-4 py-4">
+        {t.suspended && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-center text-sm font-medium text-amber-900">
+            This auction is paused by the site admin. Bidding will open again when it is resumed.
+          </div>
+        )}
         <PlayerStage state={state} player={current} teams={teams} offset={offset} timerSeconds={t.bid_timer_seconds} />
 
         <Card>

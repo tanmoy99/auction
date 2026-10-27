@@ -70,7 +70,7 @@ async function main() {
   const owners = {};
   for (const k of ["a", "b", "c", "d"]) owners[k] = await makeUser(`owner-${k}`, "owner");
 
-  let t, teams, players;
+  let t, t2, teams, players;
   const db = org.client;
   const rpc = (client, fn, args) => client.rpc(fn, args);
   const state = async () => ok(admin.from("auction_state").select("*").eq("tournament_id", t.id).single());
@@ -395,8 +395,118 @@ async function main() {
         });
       }
     }
+
+    console.log("\nSite admin & pausing (needs migration 004)");
+    const boss = await makeUser("site-admin", "organiser");
+    await ok(admin.from("profiles").update({ is_admin: true }).eq("id", boss.user.id));
+    t2 = await ok(other.client.from("tournaments").insert({ name: `TEST2 ${RUN}`, bid_timer_seconds: 0 }).select().single());
+    const [T2] = await ok(other.client.from("teams").insert({ tournament_id: t2.id, name: "Team X", purse: 10000, owner_user_id: owners.c.user.id }).select());
+    const [Q1, Q2] = await ok(
+      other.client.from("players").insert([1, 2].map((i) => ({ tournament_id: t2.id, name: `Q${i}`, base_price: 500 }))).select(),
+    );
+    const access = async (client) => ok(client.rpc("my_access"));
+
+    await test("organisers and owners cannot open the admin overview", async () => {
+      await fails(rpc(other.client, "admin_overview"), /admins only/i);
+      await fails(rpc(owners.c.client, "admin_overview"), /admins only/i);
+    });
+    await test("admin overview lists organisers, owners and tournaments with emails", async () => {
+      const o = await ok(rpc(boss.client, "admin_overview"));
+      assert(o.users.some((u) => u.email === other.email && u.tournament_count >= 1), "organiser missing");
+      assert(o.users.some((u) => u.id === owners.c.user.id && u.role === "owner" && u.teams.length >= 1), "owner missing");
+      const row = o.tournaments.find((x) => x.id === t2.id);
+      assert(row && row.team_count === 1 && row.player_count === 2 && row.active, JSON.stringify(row));
+    });
+    await test("non-admins cannot change anyone's access", async () => {
+      await fails(rpc(other.client, "admin_update_user", { p_user: other.user.id, p_changes: { is_admin: true } }), /admins only/i);
+      await fails(rpc(owners.c.client, "admin_update_user", { p_user: owners.c.user.id, p_changes: { suspended: false } }), /admins only/i);
+    });
+    await test("organiser cannot pause or un-pause their own tournament", () =>
+      fails(other.client.from("tournaments").update({ suspended: true }).eq("id", t2.id), /site admin/i));
+    await test("organiser cannot hand a tournament to another account", () =>
+      fails(other.client.from("tournaments").update({ organiser_id: org.user.id }).eq("id", t2.id), /site admin|row-level/i));
+    await test("admin can edit and run another organiser's tournament", async () => {
+      await ok(boss.client.from("tournaments").update({ venue: "Admin edit" }).eq("id", t2.id));
+      await ok(rpc(boss.client, "start_player", { p_tournament: t2.id, p_player: Q1.id }));
+      await ok(rpc(boss.client, "cancel_player", { p_tournament: t2.id }));
+    });
+
+    await test("paused tournament: bidding, auto timer and organiser controls all stop", async () => {
+      await ok(rpc(other.client, "start_player", { p_tournament: t2.id, p_player: Q1.id }));
+      await ok(boss.client.from("tournaments").update({ suspended: true, suspended_reason: "Payment pending" }).eq("id", t2.id));
+      await fails(rpc(owners.c.client, "place_bid", { p_tournament: t2.id, p_amount: 500 }), /paused/i);
+      assert((await ok(rpc(anon, "auction_tick", { p_tournament: t2.id }))) === "paused", "tick ran while paused");
+      await fails(rpc(other.client, "close_player", { p_tournament: t2.id }), /organiser/i);
+      await other.client.from("tournaments").update({ name: "renamed while paused" }).eq("id", t2.id);
+      const row = await ok(admin.from("tournaments").select("name").eq("id", t2.id).single());
+      assert(row.name === `TEST2 ${RUN}`, "organiser edited a paused tournament");
+    });
+    await test("resumed tournament works again", async () => {
+      await ok(boss.client.from("tournaments").update({ suspended: false, suspended_reason: null }).eq("id", t2.id));
+      await ok(rpc(owners.c.client, "place_bid", { p_tournament: t2.id, p_amount: 500 }));
+    });
+
+    await test("paused organiser: no new tournaments, bidding stops in their auctions", async () => {
+      await ok(rpc(boss.client, "admin_update_user", { p_user: other.user.id, p_changes: { suspended: true, suspended_reason: "Pay first" } }));
+      const a = await access(other.client);
+      assert(!a.active && a.suspended_reason === "Pay first", JSON.stringify(a));
+      await fails(other.client.from("tournaments").insert({ name: "blocked" }), /row-level security/i);
+      await fails(rpc(owners.c.client, "place_bid", { p_tournament: t2.id, p_amount: 1000 }), /paused/i);
+      const row = (await ok(rpc(boss.client, "admin_overview"))).tournaments.find((x) => x.id === t2.id);
+      assert(row && !row.active, "tournament should show as not active");
+    });
+    await test("access-until date in the past pauses, future date restores", async () => {
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      const nextMonth = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+      await ok(rpc(boss.client, "admin_update_user", { p_user: other.user.id, p_changes: { suspended: false, access_until: yesterday } }));
+      assert(!(await access(other.client)).active, "expired account still active");
+      await ok(rpc(boss.client, "admin_update_user", { p_user: other.user.id, p_changes: { access_until: nextMonth } }));
+      assert((await access(other.client)).active, "renewed account not active");
+      // Team X still leads from before the pause, so the only refusal left is "already highest" - not "paused"
+      await fails(rpc(owners.c.client, "place_bid", { p_tournament: t2.id, p_amount: 1000 }), /highest bid/i);
+    });
+    await test("paused team owner cannot bid", async () => {
+      await ok(rpc(other.client, "cancel_player", { p_tournament: t2.id }));
+      await ok(rpc(other.client, "start_player", { p_tournament: t2.id, p_player: Q2.id }));
+      await ok(rpc(boss.client, "admin_update_user", { p_user: owners.c.user.id, p_changes: { suspended: true } }));
+      await fails(rpc(owners.c.client, "place_bid", { p_tournament: t2.id, p_amount: 500 }), /login is paused/i);
+      await ok(rpc(boss.client, "admin_update_user", { p_user: owners.c.user.id, p_changes: { suspended: false } }));
+      await ok(rpc(owners.c.client, "place_bid", { p_tournament: t2.id, p_amount: 500 }));
+    });
+    await test("team owners can never be made admin", async () => {
+      await ok(rpc(boss.client, "admin_update_user", { p_user: owners.c.user.id, p_changes: { is_admin: true } }));
+      assert(!(await access(owners.c.client)).is_admin, "owner became admin");
+    });
+    await test("admin cannot pause or demote themselves", async () => {
+      await fails(rpc(boss.client, "admin_update_user", { p_user: boss.user.id, p_changes: { suspended: true } }), /own admin/i);
+      await fails(rpc(boss.client, "admin_update_user", { p_user: boss.user.id, p_changes: { is_admin: false } }), /own admin/i);
+    });
+    if (up) {
+      await test("admin user API: only admins can reset passwords", async () => {
+        const call = async (client) =>
+          fetch(`${APP}/api/admin/user`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${(await client.auth.getSession()).data.session.access_token}` },
+            body: JSON.stringify({ action: "password", userId: owners.d.user.id, password: "newpass1" }),
+          });
+        const denied = await call(other.client);
+        const allowed = await call(boss.client);
+        assert(denied.status === 403 && allowed.ok, `got ${denied.status}/${allowed.status}`);
+      });
+      await test("admin can manage team owner logins in any tournament", async () => {
+        const res = await fetch(`${APP}/api/owner`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${(await boss.client.auth.getSession()).data.session.access_token}` },
+          body: JSON.stringify({ teamId: T2.id, login: `adm${RUN}`, password: "secret1" }),
+        });
+        assert(res.ok, await res.text());
+      });
+    }
   } finally {
     console.log("\nCleaning up test data...");
+    const { data: extra } = await admin.from("teams").select("owner_user_id").eq("owner_login", `adm${RUN}`);
+    for (const row of extra ?? []) if (row.owner_user_id) createdUsers.push(row.owner_user_id);
+    if (t2) await admin.from("tournaments").delete().eq("id", t2.id);
     if (t) await admin.from("tournaments").delete().eq("id", t.id);
     for (const id of createdUsers) await admin.auth.admin.deleteUser(id);
     if (t) {

@@ -125,6 +125,12 @@ export default function LiveScreen() {
           </div>
         )}
 
+        {t.suspended && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-950/90">
+            <p className="text-6xl font-black tracking-wide">Auction paused</p>
+            <p className="mt-3 text-xl text-white/50">Please wait, it will continue shortly</p>
+          </div>
+        )}
         {state?.phase === "sold" && current && (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
             <div

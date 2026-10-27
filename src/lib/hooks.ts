@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { RealtimePostgresChangesPayload, User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
-import type { AuctionState, Bid, Player, Team, Tournament } from "./types";
+import type { Access, AuctionState, Bid, Player, Team, Tournament } from "./types";
 
 export function useUser() {
   const [user, setUser] = useState<User | null>(null);
@@ -23,16 +23,32 @@ export function useUser() {
   return { user, loading, isOwner };
 }
 
+const OPEN_ACCESS: Access = { is_admin: false, active: true, suspended: false, suspended_reason: null, access_until: null };
+
+// Admin flag and paused state of the signed-in user (null while loading)
+export function useAccess(user: User | null) {
+  const [access, setAccess] = useState<{ userId: string; value: Access } | null>(null);
+  useEffect(() => {
+    if (!user) return;
+    supabase.rpc("my_access").then(({ data, error }) => {
+      // before migration 004 the function does not exist: treat everyone as active, nobody as admin
+      setAccess({ userId: user.id, value: error || !data ? OPEN_ACCESS : (data as Access) });
+    });
+  }, [user]);
+  return user && access?.userId === user.id ? access.value : null;
+}
+
 // Sends visitors to /login (or team owners to /owner) unless they are a signed-in organiser
 export function useRequireOrganiser() {
   const { user, loading, isOwner } = useUser();
+  const access = useAccess(isOwner ? null : user);
   const router = useRouter();
   useEffect(() => {
     if (loading) return;
     if (!user) router.replace("/login");
     else if (isOwner) router.replace("/owner");
   }, [loading, user, isOwner, router]);
-  return { user, ready: !loading && !!user && !isOwner };
+  return { user, access, ready: !loading && !!user && !isOwner && !!access };
 }
 
 // Difference between the database clock and this device, so every phone shows the same countdown

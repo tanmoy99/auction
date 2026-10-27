@@ -1,5 +1,5 @@
 import { loginToEmail } from "@/lib/config";
-import { supabaseAdmin, userFromRequest } from "@/lib/supabase-admin";
+import { accessOf, supabaseAdmin, userFromRequest } from "@/lib/supabase-admin";
 
 // Organiser creates (or resets) the login for a team owner
 export async function POST(req: Request) {
@@ -21,9 +21,11 @@ export async function POST(req: Request) {
     .select("id, name, owner_name, owner_user_id, tournaments!inner(organiser_id)")
     .eq("id", teamId)
     .maybeSingle<{ id: string; name: string; owner_name: string | null; owner_user_id: string | null; tournaments: { organiser_id: string } }>();
-  if (!team || team.tournaments.organiser_id !== user.id) {
+  const access = await accessOf(user.id);
+  if (!team || (team.tournaments.organiser_id !== user.id && !access.isAdmin)) {
     return Response.json({ error: "Team not found" }, { status: 404 });
   }
+  if (!access.active) return Response.json({ error: "Your account is paused by the site admin" }, { status: 403 });
 
   // login IDs are global (they become the account email), so check every tournament
   const { data: taken } = await admin.from("teams").select("id").eq("owner_login", loginId).neq("id", team.id).limit(1);

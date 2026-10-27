@@ -18,6 +18,8 @@ export type Tournament = {
   registration_open: boolean;
   registration_token: string;
   status: "setup" | "live" | "completed";
+  suspended: boolean;
+  suspended_reason: string | null;
   created_at: string;
 };
 
@@ -88,3 +90,42 @@ export const BOWLING_STYLES = [
   "Left-arm spin",
   "Does not bowl",
 ];
+
+// What the signed-in user may do (from the my_access() function)
+export type Access = {
+  is_admin: boolean;
+  active: boolean;
+  suspended: boolean;
+  suspended_reason: string | null;
+  access_until: string | null;
+};
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: "organiser" | "owner";
+  is_admin: boolean;
+  suspended: boolean;
+  suspended_reason: string | null;
+  access_until: string | null;
+  admin_note: string | null;
+  created_at: string;
+  last_sign_in_at: string | null;
+  active: boolean;
+  tournament_count: number;
+  teams: { team: string; tournament_id: string }[];
+};
+
+export type AdminTournament = Pick<
+  Tournament,
+  "id" | "name" | "venue" | "starts_on" | "status" | "suspended" | "suspended_reason" | "created_at" | "organiser_id" | "team_budget"
+> & {
+  phase: AuctionState["phase"] | null;
+  last_activity: string | null;
+  active: boolean;
+  team_count: number;
+  player_count: number;
+  pending_count: number;
+  sold_count: number;
+};

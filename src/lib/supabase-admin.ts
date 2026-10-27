@@ -14,3 +14,15 @@ export async function userFromRequest(req: Request) {
   const { data } = await supabaseAdmin().auth.getUser(token);
   return data.user ?? null;
 }
+
+// Same rule as account_active() in the database: admins always, others unless paused or past their access date
+export async function accessOf(userId: string) {
+  const { data } = await supabaseAdmin()
+    .from("profiles")
+    .select("is_admin, suspended, access_until")
+    .eq("id", userId)
+    .maybeSingle<{ is_admin: boolean; suspended: boolean; access_until: string | null }>();
+  const today = new Date().toISOString().slice(0, 10);
+  const isAdmin = !!data?.is_admin;
+  return { isAdmin, active: isAdmin || (!!data && !data.suspended && (!data.access_until || data.access_until >= today)) };
+}
