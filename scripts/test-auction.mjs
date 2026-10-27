@@ -70,7 +70,7 @@ async function main() {
   const owners = {};
   for (const k of ["a", "b", "c", "d"]) owners[k] = await makeUser(`owner-${k}`, "owner");
 
-  let t, t2, t3, teams, players;
+  let t, t2, t3, t4, teams, players;
   const db = org.client;
   const rpc = (client, fn, args) => client.rpc(fn, args);
   const state = async () => ok(admin.from("auction_state").select("*").eq("tournament_id", t.id).single());
@@ -569,8 +569,134 @@ async function main() {
         assert(res.status === 200, `status ${res.status}`);
       });
     }
+
+    console.log("\nBall-by-ball scoring (needs migration 007)");
+    t4 = await ok(db.from("tournaments").insert({ name: `TEST4 ${RUN}`, fixture_settings: { format: "league", overs: 2, wickets: 2, points: { win: 2, tie: 1, no_result: 1 } } }).select().single());
+    const [S1, S2] = await ok(db.from("teams").insert([{ tournament_id: t4.id, name: "Strikers", purse: 10000 }, { tournament_id: t4.id, name: "Smashers", purse: 10000 }]).select());
+    const squad = await ok(
+      admin
+        .from("players")
+        .insert([S1, S1, S1, S2, S2, S2].map((tm, i) => ({ tournament_id: t4.id, name: `P${i + 1}`, status: "sold", team_id: tm.id, sold_price: 500, base_price: 500 })))
+        .select(),
+    );
+    const outsider = await ok(admin.from("players").insert({ tournament_id: t4.id, name: "Not in squad", status: "available", base_price: 500 }).select().single());
+    const sm = await ok(db.from("matches").insert({ tournament_id: t4.id, match_no: 1, stage: "league", round: 1, round_name: "Match 1", team_a_id: S1.id, team_b_id: S2.id }).select().single());
+    const scorer = createClient(URL, ANON, opts); // a volunteer with no account
+    const P = { p_match: sm.id };
+    let pin;
+    const ev = (client, pinValue, device, seq, data) =>
+      rpc(client, "scorer_event", { ...P, p_pin: pinValue, p_device: device, p_seq: seq, p_type: data.type, p_data: data, p_live: null });
+
+    await test("only the organiser can see or make the scorer PIN", async () => {
+      await fails(rpc(anon, "scorer_pin", { p_match: sm.id }), /permission|organiser/i);
+      await fails(rpc(owners.a.client, "scorer_pin", { p_match: sm.id }), /organiser/i);
+      pin = await ok(rpc(db, "scorer_pin", { p_match: sm.id }));
+      assert(/^\d{4}$/.test(pin), `pin ${pin}`);
+      const again = await ok(rpc(db, "scorer_pin", { p_match: sm.id }));
+      assert(again === pin, "PIN should stay the same unless a new one is asked for");
+    });
+    await test("the PIN is never readable from the database directly", async () => {
+      const rows = await ok(anon.from("match_scorers").select("*"));
+      const rows2 = await ok(owners.a.client.from("match_scorers").select("*"));
+      assert(rows.length === 0 && rows2.length === 0, "PIN table leaked");
+    });
+    await test("wrong PIN is refused; right PIN lets a phone without an account score", async () => {
+      const wrong = await ok(rpc(scorer, "scorer_claim", { ...P, p_pin: pin === "0000" ? "1111" : "0000", p_device: "phone-1", p_name: "Volunteer" }));
+      assert(wrong.status === "wrong_pin", JSON.stringify(wrong));
+      const right = await ok(rpc(scorer, "scorer_claim", { ...P, p_pin: pin, p_device: "phone-1", p_name: "Volunteer" }));
+      assert(right.status === "ok", JSON.stringify(right));
+    });
+    await test("one phone at a time: a second phone is asked, can take over, and the first is then locked out", async () => {
+      const second = await ok(rpc(anon, "scorer_claim", { ...P, p_pin: pin, p_device: "phone-2", p_name: "Other" }));
+      assert(second.status === "taken" && second.device_name === "Volunteer", JSON.stringify(second));
+      await ok(rpc(anon, "scorer_claim", { ...P, p_pin: pin, p_device: "phone-2", p_name: "Other", p_force: true }));
+      await fails(ev(scorer, pin, "phone-1", 1, { type: "toss", winner: S1.id, decision: "bat" }), /took over/i);
+      await ok(rpc(scorer, "scorer_claim", { ...P, p_pin: pin, p_device: "phone-1", p_name: "Volunteer", p_force: true }));
+    });
+    await test("playing XI: squad players only; guests only after the organiser approves", async () => {
+      await fails(rpc(scorer, "scorer_lineup", { ...P, p_pin: pin, p_device: "phone-1", p_team: S1.id, p_players: [{ player_id: outsider.id, name: "x" }] }), /squad/i);
+      const guestId = await ok(rpc(scorer, "scorer_request_guest", { ...P, p_pin: pin, p_device: "phone-1", p_team: S1.id, p_name: "Guest Guy", p_role: "Bowler" }));
+      const g = await ok(anon.from("guest_players").select("status").eq("id", guestId).single());
+      assert(g.status === "pending", "guest from a scorer should wait for approval");
+      const xi1 = [...squad.slice(0, 3).map((p) => ({ player_id: p.id, name: p.name })), { guest_id: guestId, name: "Guest Guy" }];
+      await fails(rpc(scorer, "scorer_lineup", { ...P, p_pin: pin, p_device: "phone-1", p_team: S1.id, p_players: xi1 }), /approval/i);
+      await fails(owners.a.client.from("guest_players").update({ status: "approved" }).eq("id", guestId).select().single(), /row|0 rows|JSON object/i);
+      await ok(db.from("guest_players").update({ status: "approved" }).eq("id", guestId));
+      await ok(rpc(scorer, "scorer_lineup", { ...P, p_pin: pin, p_device: "phone-1", p_team: S1.id, p_players: xi1 }));
+      await ok(rpc(scorer, "scorer_lineup", { ...P, p_pin: pin, p_device: "phone-1", p_team: S2.id, p_players: squad.slice(3).map((p) => ({ player_id: p.id, name: p.name })) }));
+      const xi = await ok(anon.from("match_players").select("*").eq("match_id", sm.id));
+      assert(xi.length === 7, `XI rows ${xi.length}`);
+    });
+    let mp;
+    await test("scoring events must come in order; the match goes live with a live score", async () => {
+      mp = await ok(admin.from("match_players").select("*").eq("match_id", sm.id).order("sort"));
+      const a = mp.filter((x) => x.team_id === S1.id);
+      const b = mp.filter((x) => x.team_id === S2.id);
+      await ok(ev(scorer, pin, "phone-1", 1, { type: "toss", winner: S1.id, decision: "bat" }));
+      await fails(ev(scorer, pin, "phone-1", 5, { type: "swap" }), /out of sync/i);
+      await fails(ev(scorer, pin, "phone-1", 1, { type: "swap" }), /out of sync/i);
+      await ok(ev(scorer, pin, "phone-1", 2, { type: "innings_start", batting_team: S1.id, bowling_team: S2.id, striker: a[0].id, non_striker: a[1].id, bowler: b[0].id }));
+      await ok(
+        rpc(scorer, "scorer_event", {
+          ...P,
+          p_pin: pin,
+          p_device: "phone-1",
+          p_seq: 3,
+          p_type: "ball",
+          p_data: { type: "ball", runs: 4, extra: null, extra_runs: 0, wicket: null },
+          p_live: { innings: 1, team: S1.id, runs: 4, wickets: 0, balls: 1, target: null, overs: 2 },
+        }),
+      );
+      const m = await ok(anon.from("matches").select("status, live_score").eq("id", sm.id).single());
+      assert(m.status === "live" && m.live_score.runs === 4, JSON.stringify(m));
+      const events = await ok(anon.from("match_events").select("seq").eq("match_id", sm.id));
+      assert(events.length === 3, "events should be public");
+    });
+    await test("undo removes only the last event", async () => {
+      await fails(rpc(scorer, "scorer_undo", { ...P, p_pin: pin, p_device: "phone-1", p_seq: 2, p_live: null }), /out of sync/i);
+      await ok(rpc(scorer, "scorer_undo", { ...P, p_pin: pin, p_device: "phone-1", p_seq: 3, p_live: null }));
+      const events = await ok(anon.from("match_events").select("seq").eq("match_id", sm.id));
+      assert(events.length === 2, `events left ${events.length}`);
+    });
+    await test("team owners and other organisers cannot score without the PIN", async () => {
+      await fails(ev(owners.a.client, "", "x", 3, { type: "swap" }), /PIN|took over/i);
+      await fails(ev(other.client, "", "x", 3, { type: "swap" }), /PIN|took over/i);
+      await fails(owners.a.client.from("match_events").insert({ match_id: sm.id, tournament_id: t4.id, seq: 3, type: "swap", data: {} }), /row-level security/i);
+    });
+    await test("finishing saves the result and player stats; scoring is then closed", async () => {
+      const a0 = mp.find((x) => x.team_id === S1.id);
+      const result = { outcome: "win", winner_team_id: S1.id, batting_first: "a", a_runs: 20, a_wickets: 1, a_balls: 12, b_runs: 10, b_wickets: 2, b_balls: 8, result_text: "Strikers won by 10 runs" };
+      const stats = [{ match_player_id: a0.id, team_id: S1.id, did_bat: true, bat_runs: 12, bat_balls: 6, fours: 2, sixes: 0, out: false }];
+      await fails(rpc(scorer, "scorer_finish", { ...P, p_pin: pin, p_device: "phone-1", p_result: { ...result, winner_team_id: t.id }, p_changes: [], p_stats: [] }), /winner/i);
+      await ok(rpc(scorer, "scorer_finish", { ...P, p_pin: pin, p_device: "phone-1", p_result: result, p_changes: [], p_stats: stats }));
+      const m = await ok(anon.from("matches").select("*").eq("id", sm.id).single());
+      assert(m.status === "completed" && m.result_text === "Strikers won by 10 runs" && m.live_score === null, JSON.stringify(m));
+      const rows = await ok(anon.from("player_match_stats").select("*").eq("match_id", sm.id));
+      assert(rows.length === 1 && rows[0].bat_runs === 12 && rows[0].name === a0.name, JSON.stringify(rows));
+      await fails(ev(scorer, pin, "phone-1", 3, { type: "swap" }), /finished/i);
+    });
+    await test("removing a result also removes the stats it produced", async () => {
+      await ok(db.from("matches").update({ status: "scheduled" }).eq("id", sm.id));
+      const rows = await ok(anon.from("player_match_stats").select("*").eq("match_id", sm.id));
+      assert(rows.length === 0, "stats should be cleared");
+    });
+    await test("8 wrong PINs lock the scorer link for a while", async () => {
+      for (let i = 0; i < 8; i++) await rpc(anon, "scorer_claim", { ...P, p_pin: pin === "0000" ? "1111" : "0000", p_device: "attacker", p_name: "x" });
+      await fails(rpc(anon, "scorer_claim", { ...P, p_pin: pin, p_device: "attacker", p_name: "x" }), /too many/i);
+      // the phone that is already scoring keeps working
+      await ok(ev(scorer, pin, "phone-1", 3, { type: "swap" }));
+    });
+    if (up) {
+      for (const page of [`/score/${sm.id}`, `/match/${sm.id}`, `/match/${sm.id}/screen`]) {
+        await test(`page ${page.replace(sm.id, ":id")} loads`, async () => {
+          const res = await fetch(`${APP}${page}`);
+          assert(res.status === 200, `status ${res.status}`);
+        });
+      }
+    }
   } finally {
     console.log("\nCleaning up test data...");
+    if (t4) await admin.from("tournaments").delete().eq("id", t4.id);
     if (t3) await admin.from("tournaments").delete().eq("id", t3.id);
     const { data: extra } = await admin.from("teams").select("owner_user_id").eq("owner_login", `adm${RUN}`);
     for (const row of extra ?? []) if (row.owner_user_id) createdUsers.push(row.owner_user_id);

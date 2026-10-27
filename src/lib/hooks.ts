@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { RealtimePostgresChangesPayload, User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 import type { Match } from "./fixtures";
+import type { MatchEvent, PlayerMatchStats } from "./scoring";
 import type { Access, AuctionState, Bid, Player, Team, Tournament } from "./types";
 
 export function useUser() {
@@ -262,3 +263,131 @@ export function useMatches(tournamentId: string | undefined) {
 
   return { matches, loading, reload: load };
 }
+
+export type MatchPlayer = {
+  id: string;
+  match_id: string;
+  tournament_id: string;
+  team_id: string;
+  player_id: string | null;
+  guest_id: string | null;
+  name: string;
+  role: string | null;
+  sort: number;
+};
+
+export type GuestPlayer = {
+  id: string;
+  tournament_id: string;
+  team_id: string;
+  match_id: string | null;
+  name: string;
+  role: string | null;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+};
+
+// One match with its playing XIs, scoring events and guest requests, kept up to date live
+export function useMatchLive(matchId: string | undefined) {
+  const [match, setMatch] = useState<Match | null>(null);
+  const [tournament, setTournament] = useState<Tournament | null>(null);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [players, setPlayers] = useState<MatchPlayer[]>([]);
+  const [events, setEvents] = useState<MatchEvent[]>([]);
+  const [guests, setGuests] = useState<GuestPlayer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [connected, setConnected] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!matchId) return;
+    const { data: m } = await supabase.from("matches").select("*").eq("id", matchId).maybeSingle();
+    if (!m) {
+      setLoading(false);
+      return;
+    }
+    const [t, tm, mp, ev, g] = await Promise.all([
+      supabase.from("tournaments").select("*").eq("id", m.tournament_id).maybeSingle(),
+      supabase.from("teams").select("*").eq("tournament_id", m.tournament_id).order("created_at"),
+      supabase.from("match_players").select("*").eq("match_id", matchId).order("sort"),
+      supabase.from("match_events").select("*").eq("match_id", matchId).order("seq"),
+      supabase.from("guest_players").select("*").eq("tournament_id", m.tournament_id).in("team_id", [m.team_a_id, m.team_b_id].filter(Boolean)),
+    ]);
+    setMatch(m as Match);
+    setTournament((t.data as Tournament) ?? null);
+    setTeams((tm.data as Team[]) ?? []);
+    setPlayers((mp.data as MatchPlayer[]) ?? []);
+    setEvents((ev.data as MatchEvent[]) ?? []);
+    setGuests((g.data as GuestPlayer[]) ?? []);
+    setLoading(false);
+  }, [matchId]);
+
+  useEffect(() => {
+    if (!matchId) return;
+    const byMatch = `match_id=eq.${matchId}`;
+    const channel = supabase
+      .channel(`match-${matchId}-${crypto.randomUUID()}`)
+      .on<Match>("postgres_changes", { event: "UPDATE", schema: "public", table: "matches", filter: `id=eq.${matchId}` }, (p) => setMatch(p.new as Match))
+      .on<MatchEvent>("postgres_changes", { event: "*", schema: "public", table: "match_events", filter: byMatch }, (p) =>
+        setEvents((rows) => {
+          // the scorer adds its own event straight away; drop that copy when the saved one arrives
+          const seq = p.eventType === "INSERT" ? (p.new as MatchEvent).seq : null;
+          const base = seq == null ? rows : rows.filter((r) => r.seq !== seq);
+          return applyChange(base, p).sort((a, b) => a.seq - b.seq);
+        }),
+      )
+      .on<MatchPlayer>("postgres_changes", { event: "*", schema: "public", table: "match_players", filter: byMatch }, (p) =>
+        setPlayers((rows) => applyChange(rows, p).sort((a, b) => a.sort - b.sort)),
+      )
+      .on<GuestPlayer>("postgres_changes", { event: "*", schema: "public", table: "guest_players" }, (p) => {
+        // guests are filtered to this match's teams in the screens that use them
+        setGuests((rows) => applyChange(rows, p));
+      })
+      .subscribe((status) => {
+        setConnected(status === "SUBSCRIBED");
+        if (status === "SUBSCRIBED") load();
+      });
+    const onVisible = () => document.visibilityState === "visible" && load();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      supabase.removeChannel(channel);
+    };
+  }, [matchId, load]);
+
+  // Safety net for a missed live update: compare the newest event number every few seconds
+  const lastSeq = events.at(-1)?.seq ?? 0;
+  useEffect(() => {
+    if (!matchId) return;
+    const timer = setInterval(async () => {
+      if (document.visibilityState !== "visible") return;
+      const { data } = await supabase.from("match_events").select("seq").eq("match_id", matchId).order("seq", { ascending: false }).limit(1);
+      if ((data?.[0]?.seq ?? 0) !== lastSeq) load();
+    }, connected ? 8000 : 3000);
+    return () => clearInterval(timer);
+  }, [matchId, connected, lastSeq, load]);
+
+  return { match, tournament, teams, players, events, guests, loading, connected, reload: load, setEvents };
+}
+
+// Per-player numbers from every finished match of a tournament
+export function useTournamentStats(tournamentId: string | undefined) {
+  const [rows, setRows] = useState<PlayerStatRow[]>([]);
+  const load = useCallback(async () => {
+    if (!tournamentId) return;
+    const { data } = await supabase.from("player_match_stats").select("*").eq("tournament_id", tournamentId);
+    setRows((data as PlayerStatRow[]) ?? []);
+  }, [tournamentId]);
+  useEffect(() => {
+    if (!tournamentId) return;
+    const channel = supabase
+      .channel(`stats-${tournamentId}-${crypto.randomUUID()}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "player_match_stats", filter: `tournament_id=eq.${tournamentId}` }, () => load())
+      .subscribe((status) => status === "SUBSCRIBED" && load());
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [tournamentId, load]);
+  return rows;
+}
+
+export type PlayerStatRow = PlayerMatchStats & { match_id: string; tournament_id: string; player_id: string | null; guest_id: string | null; name: string };

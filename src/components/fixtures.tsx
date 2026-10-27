@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarDays, MapPin, Pencil, Trophy } from "lucide-react";
+import Link from "next/link";
+import { CalendarDays, KeyRound, MapPin, Pencil, Radio, Trophy } from "lucide-react";
 import {
   DEFAULT_SETTINGS,
   ballsToOvers,
@@ -13,7 +14,10 @@ import {
   type Match,
   type StandingRow,
 } from "@/lib/fixtures";
+import { useTournamentStats } from "@/lib/hooks";
+import { ballsText as oversText } from "@/lib/scoring";
 import type { Team } from "@/lib/types";
+import { StatsView } from "./stats";
 import { Button, Card, EmptyState, TeamDot, cn } from "./ui";
 
 const IST = "Asia/Kolkata";
@@ -60,6 +64,7 @@ export function MatchCard({
   settings,
   onResult,
   onEdit,
+  onScorer,
 }: {
   match: Match;
   teams: Map<string, Team>;
@@ -67,8 +72,10 @@ export function MatchCard({
   settings: FixtureSettings;
   onResult?: (m: Match) => void;
   onEdit?: (m: Match) => void;
+  onScorer?: (m: Match) => void;
 }) {
   const done = m.status === "completed";
+  const live = m.status === "live" ? m.live_score : null;
   const sides = [
     { id: m.team_a_id, src: m.a_source, runs: m.a_runs, wickets: m.a_wickets, balls: m.a_balls },
     { id: m.team_b_id, src: m.b_source, runs: m.b_runs, wickets: m.b_wickets, balls: m.b_balls },
@@ -87,17 +94,26 @@ export function MatchCard({
             </span>
           )}
         </span>
-        <span className="shrink-0">
-          {matchTime(m.scheduled_at)}
-          {m.venue && ` · ${m.venue}`}
-        </span>
+        {m.status === "live" ? (
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-rose-600 px-2 py-0.5 text-[11px] font-bold text-white">
+            <span className="size-1.5 animate-pulse rounded-full bg-white" /> LIVE
+          </span>
+        ) : (
+          <span className="shrink-0">
+            {matchTime(m.scheduled_at)}
+            {m.venue && ` · ${m.venue}`}
+          </span>
+        )}
       </div>
       <div className="space-y-1">
         {sides.map((side, i) => {
           const team = side.id ? teams.get(side.id) : undefined;
           const won = done && m.winner_team_id && m.winner_team_id === side.id;
           const lost = done && m.winner_team_id && m.winner_team_id !== side.id;
-          const text = score(side.runs, side.wickets, side.balls, settings.wickets);
+          const text =
+            live && live.team === side.id
+              ? `${live.runs}/${live.wickets} (${oversText(live.balls)})`
+              : score(side.runs, side.wickets, side.balls, settings.wickets);
           return (
             <div key={i} className="flex items-center justify-between gap-2">
               <span className={cn("flex min-w-0 items-center gap-2 text-sm", won ? "font-bold text-slate-900" : lost ? "text-slate-500" : "font-medium text-slate-800")}>
@@ -111,9 +127,36 @@ export function MatchCard({
         })}
       </div>
       <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
-        <p className={cn("min-w-0 truncate text-xs", done ? "font-medium text-emerald-700" : "text-slate-400")}>
-          {done ? m.result_text : ready ? "Upcoming" : "Teams decided by earlier results"}
+        <p className={cn("min-w-0 truncate text-xs", done ? "font-medium text-emerald-700" : live ? "font-medium text-rose-700" : "text-slate-400")}>
+          {done
+            ? m.result_text
+            : live
+              ? live.target
+                ? `Need ${Math.max(live.target - live.runs, 0)} from ${live.overs * 6 - live.balls} balls`
+                : "1st innings in progress"
+              : m.status === "live"
+                ? "Toss done, starting soon"
+                : ready
+                  ? "Upcoming"
+                  : "Teams decided by earlier results"}
         </p>
+        <div className="flex shrink-0 items-center gap-1">
+          {(m.status !== "scheduled" || done) && (
+            <Link href={`/match/${m.id}`} className="rounded-md px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
+              Scorecard
+            </Link>
+          )}
+          {onScorer && ready && !done && (
+            <>
+              <button onClick={() => onScorer(m)} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Scorer PIN link">
+                <KeyRound className="size-3.5" />
+              </button>
+              <Link href={`/score/${m.id}`} className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-700">
+                <Radio className="size-3.5" /> Score
+              </Link>
+            </>
+          )}
+        </div>
         {(onResult || onEdit) && (
           <div className="flex shrink-0 gap-1">
             {onEdit && (
@@ -238,7 +281,7 @@ export function Bracket({ matches, teams, byNo, settings }: { matches: Match[]; 
   );
 }
 
-type View = "matches" | "table" | "knockout";
+type View = "matches" | "table" | "knockout" | "stats";
 
 // Matches by day, points table(s) and bracket, with a champion banner at the end
 export function FixturesView({
@@ -247,13 +290,16 @@ export function FixturesView({
   settings: saved,
   onResult,
   onEdit,
+  onScorer,
 }: {
   matches: Match[];
   teams: Team[];
   settings: FixtureSettings | null;
   onResult?: (m: Match) => void;
   onEdit?: (m: Match) => void;
+  onScorer?: (m: Match) => void;
 }) {
+  const statRows = useTournamentStats(matches[0]?.tournament_id);
   const settings = saved ?? DEFAULT_SETTINGS;
   const hasTable = matches.some((m) => m.stage !== "knockout");
   const hasKnockout = matches.some((m) => m.stage === "knockout");
@@ -279,6 +325,7 @@ export function FixturesView({
     { key: "matches", label: `Matches (${done}/${matches.length})` },
     ...(hasTable ? [{ key: "table" as const, label: "Points table" }] : []),
     ...(hasKnockout ? [{ key: "knockout" as const, label: "Knockouts" }] : []),
+    { key: "stats" as const, label: "Stats" },
   ];
 
   return (
@@ -336,7 +383,7 @@ export function FixturesView({
               </h3>
               <div className="grid gap-3 sm:grid-cols-2">
                 {list.map((m) => (
-                  <MatchCard key={m.id} match={m} teams={teams} byNo={byNo} settings={settings} onResult={onResult} onEdit={onEdit} />
+                  <MatchCard key={m.id} match={m} teams={teams} byNo={byNo} settings={settings} onResult={onResult} onEdit={onEdit} onScorer={onScorer} />
                 ))}
               </div>
             </section>
@@ -352,6 +399,8 @@ export function FixturesView({
       )}
 
       {view === "knockout" && <Bracket matches={matches} teams={teams} byNo={byNo} settings={settings} />}
+
+      {view === "stats" && <StatsView rows={statRows} teams={teams} />}
     </div>
   );
 }

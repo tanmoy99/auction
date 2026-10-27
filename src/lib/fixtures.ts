@@ -1,6 +1,8 @@
 // Fixture generation, scheduling, points table and knockout progression.
 // Plain functions with no app imports, so scripts can use them too.
 
+import type { LiveScore, ScoringRules } from "./scoring";
+
 export type FixtureFormat = "league" | "groups" | "knockout";
 export type Playoff = "none" | "final" | "semis" | "quarters" | "ipl";
 
@@ -13,6 +15,7 @@ export type FixtureSettings = {
   overs: number;
   wickets: number; // a side is all out after this many wickets
   points: { win: number; tie: number; no_result: number };
+  scoring?: Partial<ScoringRules>; // local rules: wides, no-balls, free hit, overs per bowler
   schedule: { start_date: string; first_time: string; per_day: number; gap_minutes: number; venue: string; knockouts_new_day: boolean };
 };
 
@@ -38,7 +41,8 @@ export type Match = {
   b_source: Source | null;
   scheduled_at: string | null;
   venue: string | null;
-  status: "scheduled" | "completed";
+  status: "scheduled" | "live" | "completed";
+  live_score: LiveScore | null;
   outcome: Outcome | null;
   winner_team_id: string | null;
   batting_first: "a" | "b" | null;

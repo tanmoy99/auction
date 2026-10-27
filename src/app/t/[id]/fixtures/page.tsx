@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Link2, RotateCcw, Users } from "lucide-react";
+import { Link2, RotateCcw, SlidersHorizontal, Users } from "lucide-react";
 import { FixturesView, formatName } from "@/components/fixtures";
 import { useTournament } from "@/components/tournament-context";
 import { toast } from "@/components/toast";
@@ -12,12 +12,15 @@ import { useMatches } from "@/lib/hooks";
 import { supabase } from "@/lib/supabase";
 import { FixtureGenerator } from "./generator";
 import { EditMatchModal, ResultModal } from "./match-modals";
+import { GuestRequests, RulesModal, ScorerLinkModal } from "./scoring-admin";
 
 export default function FixturesPage() {
   const { tournament: t, teams, reload: reloadTournament } = useTournament();
   const { matches, loading, reload } = useMatches(t.id);
   const [resultFor, setResultFor] = useState<Match | null>(null);
   const [editing, setEditing] = useState<Match | null>(null);
+  const [scorerFor, setScorerFor] = useState<Match | null>(null);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const teamMap = useMemo(() => new Map(teams.map((x) => [x.id, x])), [teams]);
   const settings = t.fixture_settings ?? DEFAULT_SETTINGS;
 
@@ -65,6 +68,9 @@ export default function FixturesPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setRulesOpen(true)}>
+            <SlidersHorizontal className="size-4" /> Match rules
+          </Button>
           <Button variant="secondary" size="sm" onClick={copyLink}>
             <Link2 className="size-4" /> Share link
           </Button>
@@ -79,7 +85,20 @@ export default function FixturesPage() {
         </div>
       </Card>
 
-      <FixturesView matches={matches} teams={teams} settings={t.fixture_settings} onResult={setResultFor} onEdit={setEditing} />
+      <GuestRequests tournamentId={t.id} teams={teamMap} />
+
+      <FixturesView matches={matches} teams={teams} settings={t.fixture_settings} onResult={setResultFor} onEdit={setEditing} onScorer={setScorerFor} />
+      {rulesOpen && (
+        <RulesModal
+          tournament={t}
+          onClose={() => setRulesOpen(false)}
+          onSaved={() => {
+            setRulesOpen(false);
+            reloadTournament();
+          }}
+        />
+      )}
+      {scorerFor && <ScorerLinkModal key={scorerFor.id} match={scorerFor} teams={teamMap} onClose={() => setScorerFor(null)} />}
 
       {resultFor && (
         <ResultModal
