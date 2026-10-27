@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "test:auction": "node --env-file=.env.local scripts/test-auction.mjs",
-    "seed:demo": "node --env-file=.env.local scripts/seed-demo.mjs"
+    "seed:demo": "node --env-file=.env.local scripts/seed-demo.mjs",
+    "test:fixtures": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-fixtures.mjs",
+    "seed:fixtures": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env.local scripts/seed-fixtures.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",

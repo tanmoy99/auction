@@ -42,9 +42,14 @@ export default function SquadsPage() {
           <h1 className="mt-4 text-2xl font-bold text-slate-900">{t.name} · Squads</h1>
           <p className="text-sm text-slate-500">Updates live during the auction</p>
         </div>
+        <div className="flex gap-2">
+          <a href={`/fixtures/${t.id}`}>
+            <Button variant="secondary">Fixtures</Button>
+          </a>
         <Button variant="secondary" onClick={exportExcel}>
           <Download className="size-4" /> Download Excel
         </Button>
+        </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {teams.map((team) => {

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
-import { ArrowLeft, ExternalLink, MonitorPlay, PauseCircle, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CalendarDays, ExternalLink, MonitorPlay, PauseCircle, ShieldCheck } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
 import { TournamentContext } from "@/components/tournament-context";
 import { EmptyState, PageLoader, cn } from "@/components/ui";
@@ -21,6 +21,7 @@ export function TournamentShell({ children }: { children: React.ReactNode }) {
     { href: `/t/${id}/players`, label: "Players", badge: pending },
     { href: `/t/${id}/teams`, label: "Teams" },
     { href: `/t/${id}/auction`, label: "Live auction" },
+    { href: `/t/${id}/fixtures`, label: "Fixtures" },
     { href: `/t/${id}/registration`, label: "Registration" },
     { href: `/t/${id}/settings`, label: "Settings" },
   ];
@@ -87,6 +88,13 @@ export function TournamentShell({ children }: { children: React.ReactNode }) {
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
                   <ExternalLink className="size-4" /> Squads
+                </a>
+                <a
+                  href={`/fixtures/${id}`}
+                  target="_blank"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <CalendarDays className="size-4" /> Fixtures
                 </a>
               </div>
             </div>

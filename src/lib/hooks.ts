@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { RealtimePostgresChangesPayload, User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+import type { Match } from "./fixtures";
 import type { Access, AuctionState, Bid, Player, Team, Tournament } from "./types";
 
 export function useUser() {
@@ -227,4 +228,37 @@ export function useTournamentLive(id: string | undefined) {
   }, [id, connected, load]);
 
   return { tournament, teams, players, state, bids, loading, connected, reload: load };
+}
+
+// All matches of a tournament, kept up to date live
+export function useMatches(tournamentId: string | undefined) {
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!tournamentId) return;
+    const { data } = await supabase.from("matches").select("*").eq("tournament_id", tournamentId).order("match_no");
+    setMatches((data as Match[]) ?? []);
+    setLoading(false);
+  }, [tournamentId]);
+
+  useEffect(() => {
+    if (!tournamentId) return;
+    const channel = supabase
+      .channel(`matches-${tournamentId}-${crypto.randomUUID()}`)
+      .on<Match>("postgres_changes", { event: "*", schema: "public", table: "matches", filter: `tournament_id=eq.${tournamentId}` }, (payload) =>
+        setMatches((rows) => applyChange(rows, payload).sort((a, b) => a.match_no - b.match_no)),
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") load();
+      });
+    const onVisible = () => document.visibilityState === "visible" && load();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      supabase.removeChannel(channel);
+    };
+  }, [tournamentId, load]);
+
+  return { matches, loading, reload: load };
 }

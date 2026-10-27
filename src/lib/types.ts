@@ -1,3 +1,5 @@
+import type { FixtureSettings } from "./fixtures";
+
 export type Slab = { upto: number | null; step: number };
 
 export type Tournament = {
@@ -20,6 +22,7 @@ export type Tournament = {
   status: "setup" | "live" | "completed";
   suspended: boolean;
   suspended_reason: string | null;
+  fixture_settings: FixtureSettings | null;
   created_at: string;
 };
 

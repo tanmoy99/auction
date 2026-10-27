@@ -189,15 +189,19 @@ async function main() {
     await test("live updates: a watching screen receives the new bid instantly", async () => {
       const watcher = createClient(URL, ANON, opts);
       let received = null;
+      let ready;
+      const changesReady = new Promise((resolve) => (ready = resolve));
       const ch = watcher
         .channel(`test-${RUN}`)
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "auction_state", filter: `tournament_id=eq.${t.id}` }, (p) => {
           received = p.new;
-        });
+        })
+        // the server says separately when database changes start flowing; SUBSCRIBED alone is too early
+        .on("system", {}, (msg) => msg?.extension === "postgres_changes" && ready());
       await new Promise((resolve, reject) => {
         ch.subscribe((s) => (s === "SUBSCRIBED" ? resolve() : s === "CHANNEL_ERROR" || s === "TIMED_OUT" ? reject(new Error(s)) : null));
       });
-      await sleep(1000);
+      await Promise.race([changesReady, sleep(8000)]);
       await ok(rpc(owners.c.client, "place_bid", { p_tournament: t.id, p_amount: 3500 }));
       for (let i = 0; i < 50 && !received; i++) await sleep(200);
       await watcher.removeChannel(ch);
@@ -505,7 +509,7 @@ async function main() {
 
     console.log("\nUp next (needs migration 005)");
     t3 = await ok(db.from("tournaments").insert({ name: `TEST3 ${RUN}`, bid_timer_seconds: 0, result_pause_seconds: 2 }).select().single());
-    const [N1] = await ok(db.from("teams").insert({ tournament_id: t3.id, name: "Team N", purse: 10000, owner_user_id: owners.b.user.id }).select());
+    await ok(db.from("teams").insert({ tournament_id: t3.id, name: "Team N", purse: 10000, owner_user_id: owners.b.user.id }).select());
     const [R1, R2, R3] = await ok(db.from("players").insert([1, 2, 3].map((i) => ({ tournament_id: t3.id, name: `R${i}`, base_price: 500 }))).select());
     const state3 = async () => ok(admin.from("auction_state").select("*").eq("tournament_id", t3.id).single());
 
@@ -537,6 +541,34 @@ async function main() {
       await sleep(2500);
       assert((await ok(rpc(anon, "auction_tick", { p_tournament: t3.id }))) === "idle", "should be idle");
     });
+
+    console.log("\nFixtures (needs migration 006)");
+    const [X1, X2] = await ok(admin.from("teams").select("id").eq("tournament_id", t3.id));
+    const fixture = { tournament_id: t3.id, match_no: 1, stage: "league", round: 1, round_name: "Match 1", team_a_id: X1?.id ?? null, team_b_id: X2?.id ?? null };
+    let matchId;
+    await test("organiser can create matches and save fixture settings", async () => {
+      matchId = (await ok(db.from("matches").insert(fixture).select().single())).id;
+      await ok(db.from("tournaments").update({ fixture_settings: { format: "league", overs: 10 } }).eq("id", t3.id));
+    });
+    await test("team owners and other organisers cannot add or change matches", async () => {
+      await fails(owners.b.client.from("matches").insert({ ...fixture, match_no: 2 }), /row-level security/i);
+      await fails(other.client.from("matches").insert({ ...fixture, match_no: 3 }), /row-level security/i);
+      await owners.b.client.from("matches").update({ result_text: "hacked" }).eq("id", matchId);
+      const row = await ok(admin.from("matches").select("result_text").eq("id", matchId).single());
+      assert(row.result_text === null, "owner changed a match");
+    });
+    await test("anyone (not logged in) can see fixtures and results", async () => {
+      await ok(db.from("matches").update({ status: "completed", outcome: "win", winner_team_id: fixture.team_a_id, result_text: "Team N won by 5 runs" }).eq("id", matchId));
+      const rows = await ok(anon.from("matches").select("*").eq("tournament_id", t3.id));
+      assert(rows.length === 1 && rows[0].result_text === "Team N won by 5 runs", JSON.stringify(rows));
+    });
+    await test("match numbers are unique within a tournament", () => fails(db.from("matches").insert(fixture), /duplicate|unique/i));
+    if (up) {
+      await test("page /fixtures/:id loads", async () => {
+        const res = await fetch(`${APP}/fixtures/${t3.id}`);
+        assert(res.status === 200, `status ${res.status}`);
+      });
+    }
   } finally {
     console.log("\nCleaning up test data...");
     if (t3) await admin.from("tournaments").delete().eq("id", t3.id);

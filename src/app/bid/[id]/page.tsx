@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Gavel, LogOut, Wifi, WifiOff } from "lucide-react";
+import { CalendarDays, Gavel, LogOut, Wifi, WifiOff } from "lucide-react";
 import { BidHistory, PlayerStage } from "@/components/auction";
 import { PlayerBoard, UpNext } from "@/components/player-board";
 import { toast } from "@/components/toast";
@@ -86,6 +86,9 @@ export default function BidPage() {
               {t.name}
             </p>
           </div>
+          <a href={`/fixtures/${t.id}`} className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100" title="Fixtures and points table">
+            <CalendarDays className="size-4" /> Fixtures
+          </a>
           <button onClick={signOut} className="rounded-md p-2 text-slate-400 hover:bg-slate-100" title="Sign out">
             <LogOut className="size-4" />
           </button>
