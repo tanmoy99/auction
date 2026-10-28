@@ -1,4 +1,4 @@
-# CricAuction
+# CricMate
 
 A one-stop site for local cricket tournaments: **player registration → live auction → fixtures → ball-by-ball scoring → stats**.
 

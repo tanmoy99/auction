@@ -64,7 +64,7 @@ async function makeUser(label, role) {
 }
 
 async function main() {
-  console.log(`\nCricAuction scenario tests (run ${RUN})\n`);
+  console.log(`\nCricMate scenario tests (run ${RUN})\n`);
   const org = await makeUser("organiser", "organiser");
   const other = await makeUser("other-organiser", "organiser");
   const owners = {};

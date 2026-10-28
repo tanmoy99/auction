@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: { default: `${APP_NAME} - Live cricket player auctions`, template: `%s | ${APP_NAME}` },
-  description: "Run live player auctions for local cricket tournaments. Register players, set team budgets and bid live from any phone.",
+  title: { default: `${APP_NAME} - Cricket auctions, fixtures & live scoring`, template: `%s | ${APP_NAME}` },
+  description: "Run your local cricket tournament: player registration, live auction, fixtures, ball-by-ball scoring and stats, on any phone.",
 };
 
 export const viewport: Viewport = {

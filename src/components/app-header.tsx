@@ -2,19 +2,32 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Gavel, LogOut, ShieldCheck } from "lucide-react";
+import { LogOut, ShieldCheck } from "lucide-react";
 import { APP_NAME } from "@/lib/config";
 import { useAccess, useUser } from "@/lib/hooks";
 import { supabase } from "@/lib/supabase";
-import { Button, cn } from "./ui";
+import { Button } from "./ui";
+
+/** Three stumps whose bails curve into an "m", with a ball at the foot. Same shape as src/app/icon.svg. */
+export function LogoMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 100 100" className={className} aria-hidden="true">
+      <rect x="2" y="2" width="96" height="96" rx="24" fill="#059669" />
+      <path d="M22 78V40Q32 24 42 40V78M42 40Q52 24 62 40V78" fill="none" stroke="#fff" strokeWidth="9" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="79" cy="72" r="9" fill="#c8102e" />
+      <path d="M74 66Q80 72 74 78" fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 export function Logo({ dark }: { dark?: boolean }) {
   return (
-    <Link href="/" className="flex items-center gap-2">
-      <span className="flex size-8 items-center justify-center rounded-lg bg-emerald-600 text-white">
-        <Gavel className="size-4.5" />
+    <Link href="/" className="flex items-center gap-2" aria-label={APP_NAME}>
+      <LogoMark className="size-8" />
+      <span className="text-lg font-extrabold tracking-tight">
+        <span className={dark ? "text-white" : "text-slate-900"}>Cric</span>
+        <span className={dark ? "text-emerald-400" : "text-emerald-600"}>Mate</span>
       </span>
-      <span className={cn("text-lg font-bold tracking-tight", dark ? "text-white" : "text-slate-900")}>{APP_NAME}</span>
     </Link>
   );
 }
