@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useParams } from "next/navigation";
-import { Gavel, Maximize } from "lucide-react";
+import { Gavel, Maximize, Trophy } from "lucide-react";
 import { BidHistory, Countdown, PlayerDetails } from "@/components/auction";
 import { UpNext } from "@/components/player-board";
 import { Avatar, Spinner, TeamDot, cn } from "@/components/ui";
@@ -51,9 +51,15 @@ export default function LiveScreen() {
           <h1 className="text-2xl font-bold lg:text-3xl">{t.name}</h1>
         </div>
         <div className="flex items-center gap-4">
-          <span className="flex items-center gap-2 rounded-full bg-rose-600 px-3 py-1 text-sm font-bold">
-            <span className="size-2 animate-pulse rounded-full bg-white" /> LIVE
-          </span>
+          {t.status === "live" ? (
+            <span className="flex items-center gap-2 rounded-full bg-rose-600 px-3 py-1 text-sm font-bold">
+              <span className="size-2 animate-pulse rounded-full bg-white" /> LIVE
+            </span>
+          ) : (
+            <span className="rounded-full bg-white/10 px-3 py-1 text-sm font-bold tracking-wide text-white/80">
+              {t.status === "completed" ? "FINISHED" : "STARTING SOON"}
+            </span>
+          )}
           <button onClick={() => document.documentElement.requestFullscreen?.()} className="rounded-lg p-2 text-white/50 hover:bg-white/10 hover:text-white" title="Full screen">
             <Maximize className="size-5" />
           </button>
@@ -117,12 +123,35 @@ export default function LiveScreen() {
               </div>
             </div>
           </div>
+        ) : t.status === "completed" ? (
+          <div className="flex w-full flex-col items-center text-center">
+            <div className="rounded-full bg-amber-400/10 p-6 text-amber-300 ring-1 ring-amber-400/30">
+              <Trophy className="size-14" />
+            </div>
+            <p className="mt-6 text-5xl font-black">Auction complete</p>
+            <p className="mt-2 text-xl text-white/50">
+              {sold} players sold · {rupees(teams.reduce((sum, x) => sum + x.spent, 0))} spent
+            </p>
+            <div className="mt-8 grid w-full max-w-5xl gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {teams.map((team) => (
+                <div key={team.id} className="flex items-center gap-3 rounded-2xl bg-white/5 p-4 text-left ring-1 ring-white/10">
+                  <Avatar name={team.short_name || team.name} src={team.logo_url} color={team.color} size={48} />
+                  <div className="min-w-0">
+                    <p className="truncate text-lg font-bold">{team.name}</p>
+                    <p className="text-sm tabular-nums text-white/60">
+                      {squadCount[team.id] ?? 0} players · {rupees(team.spent)} spent
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         ) : (
           <div className="flex w-full flex-col items-center text-center">
             <div className="rounded-full bg-emerald-500/10 p-6 text-emerald-400 ring-1 ring-emerald-500/30">
               <Gavel className="size-14" />
             </div>
-            <p className="mt-6 text-4xl font-bold">Next player coming up</p>
+            <p className="mt-6 text-4xl font-bold">{t.status === "setup" ? "The auction starts soon" : "Next player coming up"}</p>
             <p className="mt-2 text-xl text-white/50">
               {sold} sold · {remaining} remaining
             </p>

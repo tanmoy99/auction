@@ -23,7 +23,10 @@ Built for Indian local tournaments (bids start around ₹500), it works on phone
 - **Teams.** Set the colour, logo and purse. **Create an owner login** for each team (a short login ID and password) and share it on WhatsApp.
 - **Settings:** bid increment slabs, bid timer, the pause after SOLD / UNSOLD, reset the auction, delete the tournament.
 
+- **Step-by-step guide.** The Overview tab shows the next thing to do (teams, owner logins, players, start, finish, fixtures). An empty dashboard explains how it all works, and owners get bidding tips the first time they open their phone screen.
+
 ### Live auction
+- **Start and finish** (needs migration 009). The Live auction tab shows a readiness checklist and a **Start auction** button. While it runs there is a **Finish auction** button. Finishing clears the stage, stops automatic steps and blocks new players. The tab, big screen and owner phones then show the final result and what to do next. You can **Reopen** it to auction leftover players.
 - **The organiser's control room:**
   - start a random player or the **Up next** player
   - shuffle or choose who is next
@@ -127,7 +130,7 @@ Built for Indian local tournaments (bids start around ₹500), it works on phone
 
 1. Sign up at https://supabase.com and click **New project**. For India, pick the **Mumbai (ap-south-1)** region.
 2. Open **SQL Editor → New query**, paste the whole of [`supabase/schema.sql`](supabase/schema.sql) and click **Run**. It already includes every migration.
-   - **Upgrading an older project?** Instead, run the files in [`supabase/migrations/`](supabase/migrations) that you haven't run yet, in order (002 → 008).
+   - **Upgrading an older project?** Instead, run the files in [`supabase/migrations/`](supabase/migrations) that you haven't run yet, in order (002 → 009).
 3. Go to **Authentication → Sign In / Providers → Email**. Make sure sign-ups are allowed, and turn **off** "Confirm email".
 4. Go to **Project Settings → API Keys** and copy:
    - the Project URL
@@ -221,7 +224,7 @@ They create temporary users and tournaments and delete them at the end.
 
 ```
 supabase/schema.sql              full database: tables, security rules, auction / scoring / admin functions
-supabase/migrations/             step-by-step upgrades (002-008) for existing projects
+supabase/migrations/             step-by-step upgrades (002-009) for existing projects
 src/lib/fixtures.ts              fixture generation, scheduling, points table, NRR, knockout progression
 src/lib/scoring.ts               ball-by-ball engine: replays events into innings, scorecards, stats
 src/lib/hooks.ts                 live data hooks (auction, matches, scoring, stats) with realtime + fallback refresh

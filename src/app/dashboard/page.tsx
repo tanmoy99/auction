@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CalendarDays, MapPin, PauseCircle, Plus, Trophy, Users, UserRound } from "lucide-react";
+import { CalendarDays, Gavel, MapPin, PauseCircle, Plus, Smartphone, Trophy, UserPlus, Users, UserRound } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
 import { toast } from "@/components/toast";
 import { Button, Card, EmptyState, Field, Input, Modal, PageLoader, cn } from "@/components/ui";
@@ -69,16 +69,19 @@ export default function DashboardPage() {
         {!rows ? (
           <PageLoader />
         ) : rows.length === 0 ? (
-          <EmptyState
-            icon={<Trophy className="size-6" />}
-            title="No tournaments yet"
-            text="Create your first tournament to start registering players and teams."
-            action={
-              <Button onClick={() => setCreating(true)} disabled={paused}>
-                <Plus className="size-4" /> New tournament
-              </Button>
-            }
-          />
+          <div className="space-y-6">
+            <EmptyState
+              icon={<Trophy className="size-6" />}
+              title="No tournaments yet"
+              text="Create your first tournament to start registering players and teams."
+              action={
+                <Button onClick={() => setCreating(true)} disabled={paused}>
+                  <Plus className="size-4" /> New tournament
+                </Button>
+              }
+            />
+            <HowItWorks />
+          </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {rows.map((t) => (
@@ -123,6 +126,37 @@ export default function DashboardPage() {
       </main>
       <CreateTournamentModal open={creating} onClose={() => setCreating(false)} />
     </>
+  );
+}
+
+const HOW_IT_WORKS = [
+  { icon: Trophy, title: "Create a tournament", text: "Name, venue, team budget, base price and squad size. You can change these later in Settings." },
+  { icon: Users, title: "Add teams and owner logins", text: "Each team owner gets a login ID and password to send on WhatsApp." },
+  { icon: UserPlus, title: "Add players", text: "Import Excel or Google Sheet, or share a registration link. Approve the ones who sign up." },
+  { icon: Gavel, title: "Start the auction", text: "Bring players one by one on the Big screen. Then finish it to lock the squads." },
+  { icon: Smartphone, title: "Owners bid from phones", text: "Live bids, timer, and purse limits are handled for you. The highest bid wins the player." },
+  { icon: CalendarDays, title: "Fixtures and scoring", text: "After the auction, make the fixtures and score matches ball by ball." },
+];
+
+// First-time help for a new organiser
+function HowItWorks() {
+  return (
+    <Card className="p-5">
+      <h2 className="font-semibold text-slate-900">How it works</h2>
+      <ol className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {HOW_IT_WORKS.map((step, i) => (
+          <li key={step.title} className="flex gap-3">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-700">{i + 1}</span>
+            <div>
+              <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+                <step.icon className="size-4 text-slate-400" /> {step.title}
+              </p>
+              <p className="mt-0.5 text-sm text-slate-500">{step.text}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </Card>
   );
 }
 

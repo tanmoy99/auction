@@ -1,14 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2 } from "lucide-react";
 import { useTournament } from "@/components/tournament-context";
 import { toast } from "@/components/toast";
-import { Button, Card, Field, Input, Select } from "@/components/ui";
+import { Button, Card, Field, Input } from "@/components/ui";
 import { errorMessage, rupees } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
-import type { Slab } from "@/lib/types";
+import { AUCTION_STATUS, type Slab } from "@/lib/types";
 
 export default function SettingsPage() {
   const { tournament: t, teams } = useTournament();
@@ -23,7 +24,6 @@ export default function SettingsPage() {
     max_squad: String(t.max_squad),
     bid_timer_seconds: String(t.bid_timer_seconds),
     result_pause_seconds: String(t.result_pause_seconds),
-    status: t.status,
   });
   const [slabs, setSlabs] = useState<Slab[]>(t.increment_slabs);
   const [saving, setSaving] = useState(false);
@@ -66,7 +66,6 @@ export default function SettingsPage() {
           bid_timer_seconds: Number(form.bid_timer_seconds),
           result_pause_seconds: Number(form.result_pause_seconds),
           increment_slabs: cleanSlabs,
-          status: form.status,
         })
         .eq("id", t.id);
       if (error) throw error;
@@ -112,12 +111,13 @@ export default function SettingsPage() {
           <Field label="Start date">
             <Input type="date" value={form.starts_on} onChange={set("starts_on")} />
           </Field>
-          <Field label="Status">
-            <Select value={form.status} onChange={set("status")}>
-              <option value="setup">Setting up</option>
-              <option value="live">Live</option>
-              <option value="completed">Completed</option>
-            </Select>
+          <Field label="Auction status" hint="Start or finish it from the Live auction tab">
+            <Link
+              href={`/t/${t.id}/auction`}
+              className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 hover:border-emerald-300"
+            >
+              {AUCTION_STATUS[t.status]}
+            </Link>
           </Field>
         </div>
       </Card>

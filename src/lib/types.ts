@@ -26,6 +26,12 @@ export type Tournament = {
   created_at: string;
 };
 
+export const AUCTION_STATUS: Record<Tournament["status"], string> = {
+  setup: "Not started",
+  live: "Running",
+  completed: "Finished",
+};
+
 export type Team = {
   id: string;
   tournament_id: string;

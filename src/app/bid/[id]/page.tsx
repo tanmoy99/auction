@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { CalendarDays, Gavel, LogOut, UserPlus, Wifi, WifiOff } from "lucide-react";
+import { CalendarDays, Gavel, Lightbulb, LogOut, Trophy, UserPlus, Wifi, WifiOff, X } from "lucide-react";
 import { BidHistory, PlayerStage } from "@/components/auction";
 import { PlayerBoard, UpNext } from "@/components/player-board";
 import { toast } from "@/components/toast";
@@ -56,7 +56,8 @@ export default function BidPage() {
 
   let blocked: string | null = null;
   if (t.suspended) blocked = "Auction paused by the admin";
-  else if (!bidding) blocked = "Waiting for next player";
+  else if (t.status === "completed") blocked = "Auction finished";
+  else if (!bidding) blocked = t.status === "setup" ? "Auction hasn't started yet" : "Waiting for next player";
   else if (leading) blocked = "You are the highest bidder";
   else if (squadFull) blocked = "Your squad is full";
   else if (timeUp) blocked = "Time is up";
@@ -110,7 +111,39 @@ export default function BidPage() {
             This auction is paused by the site admin. Bidding will open again when it is resumed.
           </div>
         )}
-        <PlayerStage state={state} player={current} teams={teams} offset={offset} timerSeconds={t.bid_timer_seconds} />
+        {t.status === "completed" ? (
+          <Card className="overflow-hidden">
+            <div className="flex items-center gap-3 bg-gradient-to-br from-emerald-600 to-emerald-800 px-4 py-4 text-white">
+              <Trophy className="size-8 shrink-0 text-emerald-200" />
+              <div>
+                <p className="font-bold">The auction is finished</p>
+                <p className="text-sm text-emerald-100">
+                  You got {mySquad.length} players for {rupees(myTeam.spent)}. Your squad is below.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 p-3">
+              <a href={`/squads/${t.id}`} className="flex-1 rounded-lg border border-slate-200 py-2 text-center text-sm font-medium text-slate-700 hover:bg-slate-50">
+                All squads
+              </a>
+              <a href={`/fixtures/${t.id}`} className="flex-1 rounded-lg border border-slate-200 py-2 text-center text-sm font-medium text-slate-700 hover:bg-slate-50">
+                Fixtures
+              </a>
+            </div>
+          </Card>
+        ) : (
+          <>
+            <BiddingTips teamPage={`/bid/${t.id}/squad`} />
+            <PlayerStage
+              state={state}
+              player={current}
+              teams={teams}
+              offset={offset}
+              timerSeconds={t.bid_timer_seconds}
+              idleText={t.status === "setup" ? "The auction hasn't started yet. Keep this page open - bidding opens here." : undefined}
+            />
+          </>
+        )}
         <UpNext players={players} state={state} />
 
         <Card>
@@ -190,6 +223,54 @@ export default function BidPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+const TIPS_KEY = "cricmate-bid-tips-seen";
+
+// Shown on the owner's first visit, until they close it
+function BiddingTips({ teamPage }: { teamPage: string }) {
+  // only rendered after live data loads in the browser, so localStorage is there
+  const [show, setShow] = useState(() => {
+    try {
+      return !localStorage.getItem(TIPS_KEY);
+    } catch {
+      return true;
+    }
+  });
+  if (!show) return null;
+  function close() {
+    setShow(false);
+    try {
+      localStorage.setItem(TIPS_KEY, "1");
+    } catch {}
+  }
+  return (
+    <Card className="border-sky-200 bg-sky-50 p-4">
+      <div className="flex items-start gap-3">
+        <Lightbulb className="mt-0.5 size-5 shrink-0 text-sky-600" />
+        <div className="min-w-0 flex-1 text-sm text-sky-900">
+          <p className="font-semibold">How bidding works</p>
+          <ul className="mt-1.5 list-disc space-y-1 pl-4">
+            <li>When a player comes up, tap the big green button to bid the next amount. <b>Jump</b> skips one step higher.</li>
+            <li>Your phone buzzes when another team outbids you.</li>
+            <li>
+              <b>Max bid</b> keeps enough purse to fill your minimum squad. You can&apos;t bid above it.
+            </li>
+            <li>
+              Highest bid when the timer ends wins the player. Want your own players too? Use{" "}
+              <a href={teamPage} className="font-semibold underline">
+                Players
+              </a>{" "}
+              at the top.
+            </li>
+          </ul>
+        </div>
+        <button onClick={close} className="rounded-md p-1 text-sky-500 hover:bg-sky-100" aria-label="Close tips">
+          <X className="size-4" />
+        </button>
+      </div>
+    </Card>
   );
 }
 

@@ -70,7 +70,7 @@ async function main() {
   const owners = {};
   for (const k of ["a", "b", "c", "d"]) owners[k] = await makeUser(`owner-${k}`, "owner");
 
-  let t, t2, t3, t4, t5, teams, players;
+  let t, t2, t3, t4, t5, t6, teams, players;
   const db = org.client;
   const rpc = (client, fn, args) => client.rpc(fn, args);
   const state = async () => ok(admin.from("auction_state").select("*").eq("tournament_id", t.id).single());
@@ -833,8 +833,66 @@ async function main() {
         assert((await team(J2.id)).player_access === "none", "other organiser approved");
       });
     }
+    console.log("\nStart and finish the auction (needs migration 009)");
+    const probe = await rpc(db, "set_auction_status", { p_tournament: crypto.randomUUID(), p_status: "live" });
+    if (/could not find|does not exist/i.test(probe.error?.message ?? "")) {
+      console.log("  \x1b[33m- skipped: run supabase/migrations/009_auction_lifecycle.sql in Supabase first\x1b[0m");
+    } else {
+      t6 = await ok(db.from("tournaments").insert({ name: `TEST6 ${RUN}`, base_price: 500, min_squad: 1, max_squad: 5, bid_timer_seconds: 0 }).select().single());
+      const [F1] = await ok(db.from("teams").insert([{ tournament_id: t6.id, name: "Finish One", purse: 10000, owner_user_id: owners.c.user.id }]).select());
+      const fp = await ok(
+        db.from("players").insert([1, 2, 3].map((i) => ({ tournament_id: t6.id, name: `F${i}`, base_price: 500 }))).select(),
+      );
+      const S6 = { p_tournament: t6.id };
+      const tour6 = async () => ok(admin.from("tournaments").select("status").eq("id", t6.id).single());
+      const state6 = async () => ok(admin.from("auction_state").select("*").eq("tournament_id", t6.id).single());
+
+      await test("team owners and other organisers cannot start or finish the auction", async () => {
+        await fails(rpc(owners.c.client, "set_auction_status", { ...S6, p_status: "live" }), /organiser/i);
+        await fails(rpc(other.client, "set_auction_status", { ...S6, p_status: "completed" }), /organiser/i);
+        assert((await tour6()).status === "setup", "status changed");
+      });
+      await test("only live and completed are accepted", () => fails(rpc(db, "set_auction_status", { ...S6, p_status: "setup" }), /unknown/i));
+      await test("organiser starts the auction", async () => {
+        await ok(rpc(db, "set_auction_status", { ...S6, p_status: "live" }));
+        assert((await tour6()).status === "live", "not live");
+      });
+      await test("can't finish while a player is on stage", async () => {
+        await ok(rpc(db, "start_player", { ...S6, p_player: fp[0].id }));
+        await fails(rpc(db, "set_auction_status", { ...S6, p_status: "completed" }), /close the player/i);
+        assert((await tour6()).status === "live", "finished during bidding");
+      });
+      await test("finishing clears the stage and the up-next player", async () => {
+        await ok(rpc(owners.c.client, "place_bid", { ...S6, p_amount: 500 }));
+        await ok(rpc(db, "close_player", S6));
+        await ok(rpc(db, "set_auction_status", { ...S6, p_status: "completed" }));
+        const s = await state6();
+        assert((await tour6()).status === "completed", "not completed");
+        assert(s.phase === "idle" && s.player_id === null && s.next_player_id === null, JSON.stringify(s));
+        assert((await player(fp[0].id)).team_id === F1.id, "the sale was lost");
+      });
+      await test("a finished auction takes no more players, and the timer can't restart it", async () => {
+        await fails(rpc(db, "start_player", { ...S6, p_player: fp[1].id }), /finished/i);
+        assert((await ok(rpc(anon, "auction_tick", S6))) === "idle", "tick changed the stage");
+        await fails(rpc(owners.c.client, "place_bid", { ...S6, p_amount: 500 }), /not open/i);
+      });
+      await test("organiser can reopen and carry on", async () => {
+        await ok(rpc(db, "set_auction_status", { ...S6, p_status: "live" }));
+        await ok(rpc(db, "start_player", { ...S6, p_player: fp[1].id }));
+        assert((await state6()).phase === "bidding", "player not on stage");
+        await ok(rpc(db, "cancel_player", S6));
+      });
+      if (up) {
+        await test("page /live/:id loads after finishing", async () => {
+          await ok(rpc(db, "set_auction_status", { ...S6, p_status: "completed" }));
+          const res = await fetch(`${APP}/live/${t6.id}`);
+          assert(res.status === 200, `status ${res.status}`);
+        });
+      }
+    }
   } finally {
     console.log("\nCleaning up test data...");
+    if (t6) await admin.from("tournaments").delete().eq("id", t6.id);
     if (t5) await admin.from("tournaments").delete().eq("id", t5.id);
     if (t4) await admin.from("tournaments").delete().eq("id", t4.id);
     if (t3) await admin.from("tournaments").delete().eq("id", t3.id);
