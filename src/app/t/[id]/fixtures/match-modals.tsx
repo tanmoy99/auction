@@ -281,8 +281,20 @@ export function EditMatchModal({ match: m, teams, onClose, onSaved }: { match: M
   const [venue, setVenue] = useState(m.venue ?? "");
   const [teamA, setTeamA] = useState(m.team_a_id ?? "");
   const [teamB, setTeamB] = useState(m.team_b_id ?? "");
+  const [days, setDays] = useState(m.days ?? 5);
   const [saving, setSaving] = useState(false);
   const canChangeTeams = m.stage !== "knockout" && m.status !== "completed";
+  const test = m.match_type === "test";
+
+  async function remove() {
+    if (!confirm(`Delete ${m.round_name}? Its score and stats are deleted too.`)) return;
+    setSaving(true);
+    const { error } = await supabase.from("matches").delete().eq("id", m.id);
+    setSaving(false);
+    if (error) return toast(errorMessage(error), "error");
+    toast("Test deleted", "success");
+    onSaved();
+  }
 
   async function save() {
     if (canChangeTeams && (!teamA || !teamB || teamA === teamB)) return toast("Pick two different teams", "error");
@@ -293,6 +305,7 @@ export function EditMatchModal({ match: m, teams, onClose, onSaved }: { match: M
         scheduled_at: fromISTInputs(date, time),
         venue: venue.trim() || null,
         ...(canChangeTeams ? { team_a_id: teamA, team_b_id: teamB } : {}),
+        ...(test && m.status === "scheduled" ? { days } : {}),
       })
       .eq("id", m.id);
     setSaving(false);
@@ -302,7 +315,7 @@ export function EditMatchModal({ match: m, teams, onClose, onSaved }: { match: M
   }
 
   return (
-    <Modal open onClose={onClose} title={`Edit match ${m.match_no}`}>
+    <Modal open onClose={onClose} title={test ? `Edit ${m.round_name}` : `Edit match ${m.match_no}`}>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Date">
@@ -348,14 +361,34 @@ export function EditMatchModal({ match: m, teams, onClose, onSaved }: { match: M
             </Field>
           </div>
         )}
+        {test && m.status === "scheduled" && (
+          <Field label="Days">
+            <Select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n} day{n > 1 ? "s" : ""}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         {m.stage === "knockout" && <p className="text-xs text-slate-500">Knockout teams fill in by themselves from earlier results.</p>}
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="button" onClick={save} loading={saving}>
-            Save
-          </Button>
+        <div className="flex flex-wrap justify-between gap-2">
+          {test ? (
+            <Button type="button" variant="ghost" className="text-rose-600 hover:bg-rose-50" onClick={remove} disabled={saving}>
+              Delete Test
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={save} loading={saving}>
+              Save
+            </Button>
+          </div>
         </div>
       </div>
     </Modal>

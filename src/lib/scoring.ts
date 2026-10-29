@@ -4,7 +4,8 @@
 // Plain functions with no app imports, so scripts can use them too.
 
 export type ScoringRules = {
-  overs: number;
+  format: "limited" | "test";
+  overs: number; // per innings, 0 = no limit (Tests)
   wickets: number; // all out after this many wickets (also capped by the playing XI size)
   wide_runs: number;
   noball_runs: number;
@@ -12,9 +13,15 @@ export type ScoringRules = {
   noball_rebowl: boolean;
   free_hit: boolean;
   max_bowler_overs: number; // 0 = no limit
+  innings_per_side: 1 | 2;
+  follow_on: number; // Tests: first-innings lead that lets a side make the other follow on
+  overs_per_day: number; // Tests: overs scheduled each day, 0 = not tracked
+  days: number;
 };
 
-export function defaultRules(s?: { overs?: number; wickets?: number; scoring?: Partial<ScoringRules> } | null): ScoringRules {
+type RuleSettings = { overs?: number; wickets?: number; scoring?: Partial<ScoringRules>; test?: Partial<ScoringRules> } | null;
+
+export function defaultRules(s?: RuleSettings): ScoringRules {
   const overs = s?.overs ?? 10;
   return {
     overs,
@@ -26,6 +33,38 @@ export function defaultRules(s?: { overs?: number; wickets?: number; scoring?: P
     free_hit: true,
     max_bowler_overs: Math.ceil(overs / 5),
     ...s?.scoring,
+    format: "limited",
+    innings_per_side: 1,
+    follow_on: 0,
+    overs_per_day: 0,
+    days: 1,
+  };
+}
+
+// Laws of cricket 14.1.1: lead needed to enforce the follow-on, by match length
+export function followOnLead(days: number) {
+  return days >= 5 ? 200 : days >= 3 ? 150 : days === 2 ? 100 : 75;
+}
+
+// Rules for one match: the tournament's limited-overs rules, or Test rules for a multi-day match
+export function matchRules(s: RuleSettings | undefined, match?: { match_type?: string | null; days?: number | null } | null): ScoringRules {
+  if (match?.match_type !== "test") return defaultRules(s);
+  const days = match.days ?? 5;
+  return {
+    format: "test",
+    overs: 0,
+    wickets: 10,
+    wide_runs: 1,
+    noball_runs: 1,
+    wide_rebowl: true,
+    noball_rebowl: true,
+    free_hit: false,
+    max_bowler_overs: 0,
+    overs_per_day: 90,
+    ...s?.test,
+    innings_per_side: 2,
+    follow_on: followOnLead(days),
+    days,
   };
 }
 
@@ -43,13 +82,26 @@ export const WICKET_KINDS: { key: WicketKind; label: string; bowler: boolean; fi
 
 export type EventData =
   | { type: "toss"; winner: string; decision: "bat" | "bowl" }
-  | { type: "innings_start"; batting_team: string; bowling_team: string; striker: string; non_striker: string; bowler: string }
+  | { type: "innings_start"; batting_team: string; bowling_team: string; striker: string; non_striker: string; bowler: string; follow_on?: boolean }
   | { type: "ball"; runs: number; extra: Extra | null; extra_runs: number; wicket: { kind: WicketKind; out: string; fielder: string | null } | null }
   | { type: "new_batter"; player: string }
   | { type: "new_bowler"; player: string }
   | { type: "swap" }
   | { type: "retire"; player: string; out: boolean }
-  | { type: "end_innings" };
+  | { type: "end_innings" } // limited: innings cut short; Test: declaration
+  // Tests only
+  | { type: "stumps" } // close of play for the day
+  | { type: "break"; kind: BreakKind }
+  | { type: "end_match" }; // time ran out: the match is drawn
+
+export type BreakKind = "lunch" | "tea" | "drinks" | "rain" | "bad_light";
+export const BREAKS: { key: BreakKind; label: string }[] = [
+  { key: "lunch", label: "Lunch" },
+  { key: "tea", label: "Tea" },
+  { key: "drinks", label: "Drinks" },
+  { key: "rain", label: "Rain delay" },
+  { key: "bad_light", label: "Bad light" },
+];
 
 export type MatchEvent = { id: string; match_id: string; seq: number; type: EventData["type"]; data: EventData; created_at: string };
 
@@ -77,6 +129,7 @@ export type InningsState = {
   partnership: { runs: number; balls: number };
   complete: boolean;
   end_reason: "all_out" | "overs" | "target" | "declared" | null;
+  follow_on: boolean; // Tests: this side was made to bat again straight away
 };
 
 export type Next = "toss" | "innings_start" | "new_batter" | "new_bowler" | "ball" | "innings_break" | "finished";
@@ -89,6 +142,12 @@ export type MatchState = {
   next: Next;
   fielding: Record<string, { catches: number; stumpings: number; run_outs: number }>;
   error: string | null;
+  // Tests
+  day: number;
+  day_balls: number; // legal balls bowled today
+  stumps: boolean; // play has closed for the day (until the next action)
+  on_break: BreakKind | null;
+  drawn: boolean; // ended with "end_match"
 };
 
 export function ballsText(balls: number) {
@@ -120,7 +179,64 @@ function emptyInnings(number: number, batting: string, bowling: string): Innings
     partnership: { runs: 0, balls: 0 },
     complete: false,
     end_reason: null,
+    follow_on: false,
   };
+}
+
+// Runs per team over all its innings so far
+export function teamTotals(state: Pick<MatchState, "innings">) {
+  const totals: Record<string, number> = {};
+  for (const inn of state.innings) {
+    totals[inn.batting_team] = (totals[inn.batting_team] ?? 0) + inn.runs;
+    totals[inn.bowling_team] ??= 0;
+  }
+  return totals;
+}
+
+// Tests: the batting side's lead (negative = still behind) including this innings
+export function leadOf(state: MatchState) {
+  const inn = state.current;
+  if (!inn) return 0;
+  const totals = teamTotals(state);
+  return (totals[inn.batting_team] ?? 0) - (totals[inn.bowling_team] ?? 0);
+}
+
+// Is the match over? Limited: both innings done. Test: 4 innings done, target reached,
+// or the side batting third is all out still behind (an innings win).
+function matchOver(state: MatchState, rules: ScoringRules) {
+  const done = state.innings.filter((i) => i.complete);
+  if (rules.innings_per_side === 1) return done.length >= 2;
+  if (done.length >= 4) return true;
+  const last = state.innings.at(-1);
+  if (last?.complete && last.end_reason === "target") return true;
+  if (done.length === 3 && state.innings.length === 3) {
+    const totals = teamTotals(state);
+    const third = state.innings[2]!;
+    return (totals[third.batting_team] ?? 0) < (totals[third.bowling_team] ?? 0);
+  }
+  return false;
+}
+
+// Tests: after both first innings, may the side that batted first make the other follow on?
+export function canEnforceFollowOn(state: MatchState, rules: ScoringRules) {
+  if (rules.innings_per_side !== 2 || state.innings.length !== 2 || !state.innings[1]!.complete) return false;
+  const [i1, i2] = state.innings as [InningsState, InningsState];
+  return i1.runs - i2.runs >= rules.follow_on;
+}
+
+// Which side bats in the next innings
+export function nextBattingTeam(state: MatchState, teamA: string, teamB: string, followOn = false) {
+  const other = (id: string) => (id === teamA ? teamB : teamA);
+  const n = state.innings.length;
+  if (n === 0) {
+    const toss = state.toss!;
+    return toss.decision === "bat" ? toss.winner : other(toss.winner);
+  }
+  if (n === 1) return state.innings[0]!.bowling_team;
+  if (n === 2) return followOn ? state.innings[1]!.batting_team : state.innings[0]!.batting_team;
+  // 4th innings: whoever has batted only once
+  const times = (id: string) => state.innings.filter((i) => i.batting_team === id).length;
+  return times(teamA) < times(teamB) ? teamA : teamB;
 }
 
 function batter(inn: InningsState, id: string) {
@@ -160,15 +276,29 @@ export function allOutAt(rules: ScoringRules, xiSize: number) {
 }
 
 export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: ScoringRules, lineups: Lineups, nameOf: (id: string) => string = (id) => id): MatchState {
-  const state: MatchState = { toss: null, innings: [], current: null, target: null, next: "toss", fielding: {}, error: null };
+  const state: MatchState = {
+    toss: null,
+    innings: [],
+    current: null,
+    target: null,
+    next: "toss",
+    fielding: {},
+    error: null,
+    day: 1,
+    day_balls: 0,
+    stumps: false,
+    on_break: null,
+    drawn: false,
+  };
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   let overRuns = 0; // runs against the bowler in the current over (for maidens)
+  const lastInnings = rules.innings_per_side * 2;
 
   const finishCheck = (inn: InningsState) => {
     const xi = lineups[inn.batting_team]?.length ?? 11;
     if (inn.wickets >= allOutAt(rules, xi)) inn.end_reason = "all_out";
-    else if (inn.legal_balls >= rules.overs * 6) inn.end_reason = "overs";
-    else if (state.target != null && inn.number === 2 && inn.runs >= state.target) inn.end_reason = "target";
+    else if (rules.overs > 0 && inn.legal_balls >= rules.overs * 6) inn.end_reason = "overs";
+    else if (state.target != null && inn.number === lastInnings && inn.runs >= state.target) inn.end_reason = "target";
     if (inn.end_reason) {
       inn.complete = true;
       inn.striker = inn.non_striker = inn.bowler = null;
@@ -177,8 +307,29 @@ export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: Scorin
 
   for (const { data: e } of sorted) {
     const inn = state.current;
+    if (state.drawn) continue;
+    // any action after the close of play or a break means play has resumed
+    if (e.type !== "stumps") state.stumps = false;
+    if (e.type !== "break") state.on_break = null;
     if (e.type === "toss") {
       state.toss = { winner: e.winner, decision: e.decision };
+      continue;
+    }
+    if (e.type === "stumps") {
+      if (!state.stumps) {
+        state.day++;
+        state.day_balls = 0;
+      }
+      state.stumps = true;
+      continue;
+    }
+    if (e.type === "break") {
+      state.on_break = e.kind;
+      continue;
+    }
+    if (e.type === "end_match") {
+      state.drawn = true;
+      if (inn && !inn.complete) inn.striker = inn.non_striker = inn.bowler = null;
       continue;
     }
     if (e.type === "innings_start") {
@@ -186,11 +337,16 @@ export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: Scorin
       next.striker = e.striker;
       next.non_striker = e.non_striker;
       next.bowler = e.bowler;
+      next.follow_on = !!e.follow_on;
       batter(next, e.striker);
       batter(next, e.non_striker);
       bowlerLine(next, e.bowler);
       next.overs.push([]);
-      if (state.innings.length === 1) state.target = state.innings[0]!.runs + 1;
+      // last innings chases: everything the other side scored, minus what this side already has, plus one
+      if (next.number === lastInnings) {
+        const totals = teamTotals(state);
+        state.target = (totals[e.bowling_team] ?? 0) - (totals[e.batting_team] ?? 0) + 1;
+      }
       state.innings.push(next);
       state.current = next;
       overRuns = 0;
@@ -274,6 +430,7 @@ export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: Scorin
     if (e.extra === "nb") bowl.noballs++;
     if (legal) {
       inn.legal_balls++;
+      state.day_balls++;
       bowl.balls++;
       if (total === 0 && !e.wicket) bowl.dots++;
     }
@@ -334,13 +491,63 @@ export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: Scorin
 
   const cur = state.current;
   if (!state.toss) state.next = "toss";
+  else if (state.drawn) state.next = "finished";
   else if (!cur) state.next = "innings_start";
-  else if (cur.complete) state.next = state.innings.length >= 2 ? "finished" : "innings_break";
+  else if (cur.complete) state.next = matchOver(state, rules) ? "finished" : "innings_break";
   else if (!cur.striker || !cur.non_striker) state.next = "new_batter";
   else if (!cur.bowler) state.next = "new_bowler";
   else state.next = "ball";
-  if (cur?.complete && state.innings.length === 1) state.target = cur.runs + 1;
+  // limited overs: show the target during the break
+  if (rules.innings_per_side === 1 && cur?.complete && state.innings.length === 1) state.target = cur.runs + 1;
   return state;
+}
+
+export type Result = { outcome: "win" | "tie" | "draw"; winner: string | null; text: string };
+
+// Tests: the result from the replayed innings (call once state.next is "finished")
+export function testResult(state: MatchState, rules: ScoringRules, lineups: Lineups, teamName: (id: string | null) => string): Result {
+  const totals = teamTotals(state);
+  const inns = state.innings;
+  const fourth = inns[3];
+  if (fourth?.end_reason === "target") {
+    const left = allOutAt(rules, lineups[fourth.batting_team]?.length ?? 11) - fourth.wickets;
+    return { outcome: "win", winner: fourth.batting_team, text: `${teamName(fourth.batting_team)} won by ${left} wicket${left === 1 ? "" : "s"}` };
+  }
+  if (state.drawn) return { outcome: "draw", winner: null, text: "Match drawn" };
+  if (inns.length === 3 && inns[2]!.complete) {
+    const third = inns[2]!;
+    const by = (totals[third.bowling_team] ?? 0) - (totals[third.batting_team] ?? 0);
+    if (by > 0) return { outcome: "win", winner: third.bowling_team, text: `${teamName(third.bowling_team)} won by an innings and ${by} run${by === 1 ? "" : "s"}` };
+  }
+  if (fourth?.complete) {
+    const by = (totals[fourth.bowling_team] ?? 0) - (totals[fourth.batting_team] ?? 0);
+    if (by === 0) return { outcome: "tie", winner: null, text: "Match tied" };
+    return { outcome: "win", winner: fourth.bowling_team, text: `${teamName(fourth.bowling_team)} won by ${by} run${by === 1 ? "" : "s"}` };
+  }
+  return { outcome: "draw", winner: null, text: "Match drawn" };
+}
+
+// Test scores in batting order, saved on the match row: "245 & 180/6d"
+export type InningsSummary = { team: string; runs: number; wickets: number; balls: number; declared: boolean; follow_on: boolean };
+
+export function inningsSummary(state: Pick<MatchState, "innings">): InningsSummary[] {
+  return state.innings.map((i) => ({
+    team: i.batting_team,
+    runs: i.runs,
+    wickets: i.wickets,
+    balls: i.legal_balls,
+    declared: i.end_reason === "declared",
+    follow_on: i.follow_on,
+  }));
+}
+
+// One team's Test score line, e.g. "245 & 180/6d (f/o)". allOut hides the wickets of a completed all-out innings.
+export function testScoreText(list: InningsSummary[] | null | undefined, team: string | null, allOut = 10) {
+  const mine = (list ?? []).filter((i) => i.team === team);
+  if (!mine.length) return null;
+  return mine
+    .map((i) => `${i.runs}${i.wickets < allOut || i.declared ? `/${i.wickets}` : ""}${i.declared ? "d" : ""}${i.follow_on ? " (f/o)" : ""}`)
+    .join(" & ");
 }
 
 // Players of the batting side who can still come in
@@ -362,35 +569,56 @@ export function availableBowlers(inn: InningsState, xi: string[], rules: Scoring
 }
 
 // Short summary stored on the match row so lists can show the live score without replaying
-export type LiveScore = { innings: number; team: string; runs: number; wickets: number; balls: number; target: number | null; overs: number };
+// Tests also carry the day, the lead and every innings so far
+export type LiveScore = {
+  innings: number;
+  team: string;
+  runs: number;
+  wickets: number;
+  balls: number;
+  target: number | null;
+  overs: number;
+  test?: { day: number; lead: number; stumps: boolean; on_break: BreakKind | null; scores: InningsSummary[] };
+};
 
 export function liveScore(state: MatchState, rules: ScoringRules): LiveScore | null {
   const c = state.current;
   if (!c) return null;
-  return { innings: c.number, team: c.batting_team, runs: c.runs, wickets: c.wickets, balls: c.legal_balls, target: state.target, overs: rules.overs };
+  const base = { innings: c.number, team: c.batting_team, runs: c.runs, wickets: c.wickets, balls: c.legal_balls, target: state.target, overs: rules.overs };
+  if (rules.format !== "test") return base;
+  return { ...base, test: { day: state.day, lead: leadOf(state), stumps: state.stumps, on_break: state.on_break, scores: inningsSummary(state) } };
 }
 
-// Fields for the matches table once both innings are done (winner decided by decideResult in fixtures.ts)
+// Fields for the matches table once the match is done (winner decided by decideResult / testResult).
+// In a Test the runs and balls are both innings added up; wickets are from the side's last innings.
 export function resultScores(state: MatchState, teamA: string) {
-  const [i1, i2] = state.innings;
+  const i1 = state.innings[0];
   if (!i1) return null;
-  const side = (team: string) => [i1, i2].find((i) => i?.batting_team === team);
-  const a = side(teamA);
-  const b = [i1, i2].find((i) => i && i.batting_team !== teamA);
+  const side = (mine: boolean) => {
+    const list = state.innings.filter((i) => (i.batting_team === teamA) === mine);
+    return {
+      runs: list.reduce((s, i) => s + i.runs, 0),
+      wickets: list.at(-1)?.wickets ?? 0,
+      balls: list.reduce((s, i) => s + i.legal_balls, 0),
+    };
+  };
+  const a = side(true);
+  const b = side(false);
   return {
     batting_first: (i1.batting_team === teamA ? "a" : "b") as "a" | "b",
-    a_runs: a?.runs ?? 0,
-    a_wickets: a?.wickets ?? 0,
-    a_balls: a?.legal_balls ?? 0,
-    b_runs: b?.runs ?? 0,
-    b_wickets: b?.wickets ?? 0,
-    b_balls: b?.legal_balls ?? 0,
+    a_runs: a.runs,
+    a_wickets: a.wickets,
+    a_balls: a.balls,
+    b_runs: b.runs,
+    b_wickets: b.wickets,
+    b_balls: b.balls,
   };
 }
 
 // Per player numbers for one match (saved when the match finishes)
 export type PlayerMatchStats = {
   match_player_id: string;
+  innings: number; // 1, or 2 for a player's second innings in a Test
   team_id: string;
   did_bat: boolean;
   bat_runs: number;
@@ -410,46 +638,59 @@ export type PlayerMatchStats = {
   run_outs: number;
 };
 
+// One row per player (per innings in a Test: a player's 2nd innings gets its own row)
 export function matchStats(state: MatchState, lineups: Lineups): PlayerMatchStats[] {
   const rows = new Map<string, PlayerMatchStats>();
+  const teamOf = new Map<string, string>();
+  const blank = (id: string, team: string, innings: number): PlayerMatchStats => ({
+    match_player_id: id,
+    innings,
+    team_id: team,
+    did_bat: false,
+    bat_runs: 0,
+    bat_balls: 0,
+    fours: 0,
+    sixes: 0,
+    out: false,
+    how_out: null,
+    bowl_balls: 0,
+    bowl_runs: 0,
+    wickets: 0,
+    maidens: 0,
+    wides: 0,
+    noballs: 0,
+    catches: 0,
+    stumpings: 0,
+    run_outs: 0,
+  });
+  const row = (id: string, innings: number) => {
+    const key = `${id}:${innings}`;
+    if (!rows.has(key) && teamOf.has(id)) rows.set(key, blank(id, teamOf.get(id)!, innings));
+    return rows.get(key);
+  };
   for (const [team, ids] of Object.entries(lineups)) {
     for (const id of ids) {
-      rows.set(id, {
-        match_player_id: id,
-        team_id: team,
-        did_bat: false,
-        bat_runs: 0,
-        bat_balls: 0,
-        fours: 0,
-        sixes: 0,
-        out: false,
-        how_out: null,
-        bowl_balls: 0,
-        bowl_runs: 0,
-        wickets: 0,
-        maidens: 0,
-        wides: 0,
-        noballs: 0,
-        catches: 0,
-        stumpings: 0,
-        run_outs: 0,
-      });
+      teamOf.set(id, team);
+      row(id, 1);
     }
   }
+  // the nth time each side batted / bowled
+  const batTimes: Record<string, number> = {};
+  const bowlTimes: Record<string, number> = {};
   for (const inn of state.innings) {
+    const batN = (batTimes[inn.batting_team] = (batTimes[inn.batting_team] ?? 0) + 1);
+    const bowlN = (bowlTimes[inn.bowling_team] = (bowlTimes[inn.bowling_team] ?? 0) + 1);
     for (const b of inn.batters) {
-      const r = rows.get(b.id);
-      if (!r) continue;
-      Object.assign(r, { did_bat: true, bat_runs: b.runs, bat_balls: b.balls, fours: b.fours, sixes: b.sixes, out: b.out, how_out: b.how });
+      const r = row(b.id, batN);
+      if (r) Object.assign(r, { did_bat: true, bat_runs: b.runs, bat_balls: b.balls, fours: b.fours, sixes: b.sixes, out: b.out, how_out: b.how });
     }
     for (const b of inn.bowlers) {
-      const r = rows.get(b.id);
-      if (!r) continue;
-      Object.assign(r, { bowl_balls: b.balls, bowl_runs: b.runs, wickets: b.wickets, maidens: b.maidens, wides: b.wides, noballs: b.noballs });
+      const r = row(b.id, bowlN);
+      if (r) Object.assign(r, { bowl_balls: b.balls, bowl_runs: b.runs, wickets: b.wickets, maidens: b.maidens, wides: b.wides, noballs: b.noballs });
     }
   }
   for (const [id, f] of Object.entries(state.fielding)) {
-    const r = rows.get(id);
+    const r = row(id, 1);
     if (r) Object.assign(r, f);
   }
   return [...rows.values()];

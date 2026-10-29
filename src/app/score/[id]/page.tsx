@@ -9,6 +9,7 @@ import { toast } from "@/components/toast";
 import { Button, Card, EmptyState, Field, Input, Modal, PageLoader, Select } from "@/components/ui";
 import { DEFAULT_SETTINGS } from "@/lib/fixtures";
 import { errorMessage } from "@/lib/format";
+import { BREAKS } from "@/lib/scoring";
 import { useMatchLive, useUser } from "@/lib/hooks";
 import { supabase } from "@/lib/supabase";
 import { FinishPanel, InningsBreak, OpenersPanel, PickPanel, ScoringPad, TossPanel } from "./pad";
@@ -137,7 +138,7 @@ function Scorer({ live, access, onLost }: { live: ReturnType<typeof useMatchLive
   const match = live.match!;
   const tournament = live.tournament!;
   const settings = tournament.fixture_settings ?? DEFAULT_SETTINGS;
-  const board = useScoreboard(tournament, live.teams, live.players, live.events);
+  const board = useScoreboard(tournament, live.teams, live.players, live.events, match);
   const { send, undo, call } = useScoringActions(match.id, access, board, live.events, live.setEvents, live.reload, onLost);
   const [menu, setMenu] = useState(false);
   const [editXi, setEditXi] = useState(false);
@@ -175,7 +176,15 @@ function Scorer({ live, access, onLost }: { live: ReturnType<typeof useMatchLive
   else if (state.next === "toss") body = <TossPanel match={match} board={board} send={send} />;
   else if (state.next === "innings_start") body = <OpenersPanel match={match} board={board} send={send} />;
   else if (state.next === "innings_break") body = <InningsBreakOrOpeners board={board} match={match} send={send} />;
-  else if (state.next === "finished") body = <FinishPanel match={match} board={board} settings={settings} call={call} />;
+  else if (state.next === "finished")
+    body = (
+      <div className="space-y-3">
+        <FinishPanel match={match} board={board} settings={settings} call={call} />
+        <Button variant="secondary" className="w-full" onClick={undo} disabled={!live.events.length}>
+          Undo last action
+        </Button>
+      </div>
+    );
   else
     body = (
       <div className="space-y-4">
@@ -194,6 +203,7 @@ function Scorer({ live, access, onLost }: { live: ReturnType<typeof useMatchLive
     );
 
   const inn = state.current;
+  const test = board.rules.format === "test";
 
   return (
     <div className="flex flex-1 flex-col bg-slate-50">
@@ -205,7 +215,7 @@ function Scorer({ live, access, onLost }: { live: ReturnType<typeof useMatchLive
             </p>
             <p className="flex items-center gap-1 truncate text-xs text-slate-500">
               {live.connected ? <Wifi className="size-3 text-emerald-600" /> : <WifiOff className="size-3 text-amber-600" />}
-              Match {match.match_no} · {tournament.name}
+              {test ? `${match.round_name} · ${match.days}-day Test` : `Match ${match.match_no}`} · {tournament.name}
             </p>
           </div>
           <a href={`/match/${match.id}`} target="_blank" className="rounded-md p-2 text-slate-500 hover:bg-slate-100" title="Public scorecard">
@@ -249,11 +259,52 @@ function Scorer({ live, access, onLost }: { live: ReturnType<typeof useMatchLive
               disabled={!inn || inn.complete}
               onClick={() => {
                 setMenu(false);
-                if (confirm("End this innings now (e.g. time ran out)?")) send({ type: "end_innings" });
+                if (confirm(test ? "Declare this innings closed?" : "End this innings now (e.g. time ran out)?")) send({ type: "end_innings" });
               }}
             >
-              End innings now
+              {test ? "Declare innings" : "End innings now"}
             </Button>
+            {test && (
+              <>
+                <Button
+                  variant="secondary"
+                  disabled={!state.toss || state.stumps || state.next === "finished"}
+                  onClick={() => {
+                    setMenu(false);
+                    if (confirm(`Stumps: close of play on day ${state.day}?`)) send({ type: "stumps" });
+                  }}
+                >
+                  Stumps (end of day {state.day})
+                </Button>
+                <div className="grid grid-cols-3 gap-2">
+                  {BREAKS.map((b) => (
+                    <Button
+                      key={b.key}
+                      size="sm"
+                      variant="secondary"
+                      disabled={!inn || inn.complete || state.on_break === b.key}
+                      onClick={() => {
+                        setMenu(false);
+                        send({ type: "break", kind: b.key });
+                      }}
+                    >
+                      {b.label}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-500">A break or stumps shows on every screen until the next ball is scored.</p>
+                <Button
+                  variant="secondary"
+                  disabled={!state.innings.length || state.next === "finished"}
+                  onClick={() => {
+                    setMenu(false);
+                    if (confirm("Time is up: end the match as a draw? You can undo it.")) send({ type: "end_match" });
+                  }}
+                >
+                  End match as a draw
+                </Button>
+              </>
+            )}
             <Button
               variant="ghost"
               className="text-rose-600 hover:bg-rose-50"
@@ -281,7 +332,7 @@ function Scorer({ live, access, onLost }: { live: ReturnType<typeof useMatchLive
       {retire && inn && (
         <RetireModal
           options={[inn.striker, inn.non_striker].filter(Boolean) as string[]}
-          name={board.name}
+          name={board.label}
           onClose={() => setRetire(false)}
           onSave={(player, out) => {
             setRetire(false);

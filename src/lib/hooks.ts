@@ -274,6 +274,8 @@ export type MatchPlayer = {
   name: string;
   role: string | null;
   sort: number;
+  is_captain?: boolean; // missing before migration 010
+  is_keeper?: boolean;
 };
 
 export type GuestPlayer = {

@@ -1,7 +1,7 @@
 // Fixture generation, scheduling, points table and knockout progression.
 // Plain functions with no app imports, so scripts can use them too.
 
-import type { LiveScore, ScoringRules } from "./scoring";
+import type { InningsSummary, LiveScore, ScoringRules } from "./scoring";
 
 export type FixtureFormat = "league" | "groups" | "knockout";
 export type Playoff = "none" | "final" | "semis" | "quarters" | "ipl";
@@ -16,6 +16,7 @@ export type FixtureSettings = {
   wickets: number; // a side is all out after this many wickets
   points: { win: number; tie: number; no_result: number };
   scoring?: Partial<ScoringRules>; // local rules: wides, no-balls, free hit, overs per bowler
+  test?: Partial<ScoringRules>; // Test match rules: wickets, overs per day
   schedule: { start_date: string; first_time: string; per_day: number; gap_minutes: number; venue: string; knockouts_new_day: boolean };
 };
 
@@ -25,7 +26,7 @@ export type Source =
   | { type: "loser"; match: number }
   | { type: "standing"; group: string | null; position: number };
 
-export type Outcome = "win" | "tie" | "no_result" | "walkover";
+export type Outcome = "win" | "tie" | "no_result" | "walkover" | "draw";
 
 export type Match = {
   id: string;
@@ -53,8 +54,13 @@ export type Match = {
   b_wickets: number | null;
   b_balls: number | null;
   result_text: string | null;
+  match_type: "limited" | "test";
+  days: number | null; // Tests: 1 to 5
+  innings: InningsSummary[] | null; // Tests: every innings, saved with the result
   created_at: string;
 };
+
+export const isTest = (m: Pick<Match, "match_type">) => m.match_type === "test";
 
 export type NewMatch = Pick<Match, "match_no" | "stage" | "group_name" | "round" | "round_name" | "team_a_id" | "team_b_id" | "a_source" | "b_source" | "scheduled_at" | "venue">;
 
@@ -71,6 +77,13 @@ export const DEFAULT_SETTINGS: FixtureSettings = {
 };
 
 export const GROUP_NAMES = "ABCDEFGHIJKLMNOP".split("");
+
+// One-day match lengths. Each bowler may bowl a fifth of the overs.
+export const OVERS_PRESETS = [
+  { overs: 10, label: "T10", hint: "10 overs, 2 per bowler" },
+  { overs: 20, label: "T20", hint: "20 overs, 4 per bowler" },
+  { overs: 50, label: "One Day (50 overs)", hint: "50 overs, 10 per bowler" },
+];
 
 // ---------------------------------------------------------------------
 // Small helpers
@@ -406,7 +419,7 @@ export function standings(matches: Match[], s: Pick<FixtureSettings, "overs" | "
   // an all-out side counts as having faced its full overs (standard NRR rule)
   const faced = (balls: number | null, wickets: number | null) => ((wickets ?? 0) >= s.wickets ? s.overs * 6 : (balls ?? 0));
 
-  const ordered = matches.filter((m) => m.stage !== "knockout").sort((a, b) => a.match_no - b.match_no);
+  const ordered = matches.filter((m) => m.stage !== "knockout" && !isTest(m)).sort((a, b) => a.match_no - b.match_no);
   for (const m of ordered) {
     if (!m.team_a_id || !m.team_b_id) continue;
     const a = row(m.group_name, m.team_a_id);
@@ -477,7 +490,7 @@ export function resolveTeams(matches: Match[], s: Pick<FixtureSettings, "overs" 
   const byNo = new Map(matches.map((m) => [m.match_no, m]));
   const tables = standings(matches, s);
   const groupDone = (group: string | null) =>
-    matches.filter((m) => m.stage !== "knockout" && m.group_name === group).every((m) => m.status === "completed");
+    matches.filter((m) => m.stage !== "knockout" && !isTest(m) && m.group_name === group).every((m) => m.status === "completed");
 
   const team = (src: Source | null): string | null => {
     if (!src) return null;
@@ -500,9 +513,78 @@ export function resolveTeams(matches: Match[], s: Pick<FixtureSettings, "overs" 
 }
 
 // The tournament winner, once the last knockout (or a league with no playoffs) is done
-export function champion(matches: Match[], s: Pick<FixtureSettings, "overs" | "wickets" | "points">) {
+export function champion(all: Match[], s: Pick<FixtureSettings, "overs" | "wickets" | "points">) {
+  const matches = all.filter((m) => !isTest(m));
   if (!matches.length || matches.some((m) => m.status !== "completed")) return null;
   const knockouts = matches.filter((m) => m.stage === "knockout");
   if (knockouts.length) return knockouts.sort((a, b) => b.match_no - a.match_no)[0]!.winner_team_id;
   return standings(matches, s).get(null)?.[0]?.team_id ?? null;
+}
+
+// ---------------------------------------------------------------------
+// Test matches
+// ---------------------------------------------------------------------
+
+// World Test Championship points: 12 a win, 6 a tie, 4 a draw
+export const TEST_POINTS = { win: 12, tie: 6, draw: 4 };
+
+export type TestRow = { team_id: string; played: number; won: number; lost: number; drawn: number; tied: number; points: number; pct: number };
+
+// Test table: points, then percentage of points available (as in the World Test Championship)
+export function testStandings(matches: Match[]) {
+  const rows = new Map<string, TestRow>();
+  const row = (id: string) => {
+    if (!rows.has(id)) rows.set(id, { team_id: id, played: 0, won: 0, lost: 0, drawn: 0, tied: 0, points: 0, pct: 0 });
+    return rows.get(id)!;
+  };
+  for (const m of matches) {
+    if (!isTest(m) || !m.team_a_id || !m.team_b_id) continue;
+    const a = row(m.team_a_id);
+    const b = row(m.team_b_id);
+    if (m.status !== "completed" || m.outcome === "no_result") continue;
+    a.played++;
+    b.played++;
+    if (m.outcome === "draw") {
+      for (const r of [a, b]) {
+        r.drawn++;
+        r.points += TEST_POINTS.draw;
+      }
+    } else if (m.outcome === "tie") {
+      for (const r of [a, b]) {
+        r.tied++;
+        r.points += TEST_POINTS.tie;
+      }
+    } else {
+      const [w, l] = m.winner_team_id === m.team_a_id ? [a, b] : [b, a];
+      w.won++;
+      w.points += TEST_POINTS.win;
+      l.lost++;
+    }
+  }
+  const list = [...rows.values()];
+  for (const r of list) r.pct = r.played ? (r.points * 100) / (r.played * TEST_POINTS.win) : 0;
+  return list.sort((x, y) => y.pct - x.pct || y.points - x.points || y.won - x.won || x.team_id.localeCompare(y.team_id));
+}
+
+// A Test series between two teams: one match after another, a rest day in between
+export function testSeries(o: { teamA: string; teamB: string; count: number; days: number; start: string | null; venue: string | null; firstNo: number; alternateHome: boolean }) {
+  return Array.from({ length: o.count }, (_, i) => {
+    const swap = o.alternateHome && i % 2 === 1;
+    const at = o.start ? new Date(new Date(o.start).getTime() + i * (o.days + 1) * 86_400_000).toISOString() : null;
+    return {
+      match_no: o.firstNo + i,
+      stage: "league" as const,
+      group_name: null,
+      round: i + 1,
+      round_name: `${ordinal(i + 1)} Test`,
+      team_a_id: swap ? o.teamB : o.teamA,
+      team_b_id: swap ? o.teamA : o.teamB,
+      a_source: null,
+      b_source: null,
+      scheduled_at: at,
+      venue: o.venue,
+      match_type: "test" as const,
+      days: o.days,
+    };
+  });
 }

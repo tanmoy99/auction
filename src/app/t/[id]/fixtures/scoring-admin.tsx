@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, Copy, MessageCircle, RefreshCw, UserPlus, X } from "lucide-react";
 import { toast } from "@/components/toast";
 import { Button, Card, Field, Input, Modal, Spinner, TeamDot } from "@/components/ui";
-import { DEFAULT_SETTINGS, type Match } from "@/lib/fixtures";
+import { DEFAULT_SETTINGS, OVERS_PRESETS, type Match } from "@/lib/fixtures";
 import { errorMessage } from "@/lib/format";
 import type { GuestPlayer } from "@/lib/hooks";
 import { supabase } from "@/lib/supabase";
@@ -154,7 +154,8 @@ export function RulesModal({ tournament, onClose, onSaved }: { tournament: Tourn
 
   async function save() {
     setSaving(true);
-    const { overs, wickets, ...scoring } = rules;
+    const { overs, wickets, wide_runs, noball_runs, wide_rebowl, noball_rebowl, free_hit, max_bowler_overs } = rules;
+    const scoring = { wide_runs, noball_runs, wide_rebowl, noball_rebowl, free_hit, max_bowler_overs };
     const { error } = await supabase
       .from("tournaments")
       .update({ fixture_settings: { ...settings, overs, wickets, scoring } })
@@ -176,8 +177,22 @@ export function RulesModal({ tournament, onClose, onSaved }: { tournament: Tourn
   );
 
   return (
-    <Modal open onClose={onClose} title="Match rules">
+    <Modal open onClose={onClose} title="One-day match rules">
       <div className="space-y-4">
+        <div className="flex flex-wrap gap-2">
+          {OVERS_PRESETS.map((p) => (
+            <Button
+              key={p.overs}
+              type="button"
+              size="sm"
+              variant={rules.overs === p.overs ? "primary" : "secondary"}
+              onClick={() => set({ overs: p.overs, max_bowler_overs: p.overs / 5 })}
+              title={p.hint}
+            >
+              {p.label}
+            </Button>
+          ))}
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Overs per side">
             <Input type="number" min={1} max={50} value={rules.overs} onChange={(e) => set({ overs: Number(e.target.value) })} />

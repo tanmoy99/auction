@@ -21,6 +21,7 @@ Built for Indian local tournaments (bids start around ₹500), it works on phone
 
   New registrations wait as **Pending** until you approve them. Duplicate phone numbers are ignored.
 - **Teams.** Set the colour, logo and purse. **Create an owner login** for each team (a short login ID and password) and share it on WhatsApp.
+- **Squad roles** (needs migration 010). Team owners set each player's role and pick a **captain (C)**, **vice-captain (VC)** and **wicket-keeper (WK)**. They show on the squads page and Excel, the owner's phone, the organiser's player list and the auction player board.
 - **Settings:** bid increment slabs, bid timer, the pause after SOLD / UNSOLD, reset the auction, delete the tournament.
 
 - **Step-by-step guide.** The Overview tab shows the next thing to do (teams, owner logins, players, start, finish, fixtures). An empty dashboard explains how it all works, and owners get bidding tips the first time they open their phone screen.
@@ -51,6 +52,9 @@ Built for Indian local tournaments (bids start around ₹500), it works on phone
 - Every screen updates **live without reloading**, and there's a backup refresh in case a phone's connection drops.
 
 ### Fixtures
+The Fixtures tab has two sections: **One-day** and **Test matches**.
+
+- **One-day match length:** T10, T20 or 50 overs (One Day), or any custom number of overs. Each preset also sets the overs per bowler.
 - **Formats:**
   - **League:** every team plays every other team once or twice (home and away). After the league there can be no playoffs, a **Final**, **Semi-finals** (1v4, 2v3), **Quarter-finals**, or **IPL-style** playoffs (Qualifier 1, Eliminator, Qualifier 2, Final).
   - **Groups + knockout:** 2–8 groups, with the top 1–4 of each group going through. Group winners meet the other group's runner-up. You can shuffle the draw.
@@ -59,13 +63,24 @@ Built for Indian local tournaments (bids start around ₹500), it works on phone
 - **Quick result entry:** runs, wickets and overs for each side, no result, walkover, or a tie with a super-over winner. The result line ("won by 24 runs") is written automatically.
 - **Points table:** P, W, L, T, NR, points, **net run rate** (using the all-out rule) and form. The qualifying places are highlighted.
 - **Knockouts fill themselves in.** Table positions go into the playoffs once the league or a group finishes, and every knockout winner moves into the next round. A champion banner appears at the end.
-- A public **fixtures page** (`/fixtures/<id>`) with matches, the points table, the bracket and stats. It updates live.
+- A public **fixtures page** (`/fixtures/<id>`) with matches, the points table, the bracket, Tests and stats. It updates live.
+
+### Test matches (needs migration 010)
+- **Add a single Test or a 2–5 match series** between two teams. Each Test is 1–5 days. A series can swap home and away, and each Test starts the day after the last one ends.
+- **Two innings a side** with no overs limit, no overs-per-bowler limit and no free hits.
+- **Declarations**, the **follow-on** (offered when the lead is 200 / 150 / 100 / 75 runs for a 5 / 3-4 / 2 / 1-day Test), and the **4th-innings target** (worked out from both sides' totals).
+- **Days and breaks:** stumps moves the match to the next day. Lunch, tea, drinks, rain and bad-light breaks show on every screen until the next ball. Overs left today are counted (90 a day by default).
+- **Results:** win by an innings and N runs, by N runs or by N wickets, a draw ("end match as a draw" when time runs out) or a tie. Results can also be entered by hand.
+- **Lead and trail** on the scorer's phone, the public scorecard and the big screen. Fixture cards show scores like `245 & 180/6d`.
+- A separate **Test table** with World Test Championship points (win 12, tie 6, draw 4), ranked by the share of points won. Tests don't count in the one-day points table or knockouts.
+- **Player stats are kept per innings,** so a player who bats twice gets two innings in averages and best bowling.
 
 ### Ball-by-ball scoring
 - **Who can score.** The organiser can score any match. A volunteer can score using a **per-match PIN link** shared on WhatsApp, with no account needed.
   - **Only one phone scores at a time.** A second phone is asked whether to take over, and the first is then locked out.
   - **8 wrong PINs lock the link for 10 minutes.** A new PIN can be made at any time.
 - **Playing XI.** Players are picked from each team's auction squad. A scorer can request a **guest player**; it can only go into the XI after the **organiser approves it**.
+  - Each player's **role** (batter, bowler, all-rounder, keeper), the **captain** and the **wicket-keeper** can be set for the match. They start from the squad roles the owner picked. Scorecards show them as `(c)` and `†`.
 - **Scoring pad:**
   - 0, 1, 2, 3, 4, 5, 6
   - wide, no-ball, bye, leg-bye
@@ -130,7 +145,7 @@ Built for Indian local tournaments (bids start around ₹500), it works on phone
 
 1. Sign up at https://supabase.com and click **New project**. For India, pick the **Mumbai (ap-south-1)** region.
 2. Open **SQL Editor → New query**, paste the whole of [`supabase/schema.sql`](supabase/schema.sql) and click **Run**. It already includes every migration.
-   - **Upgrading an older project?** Instead, run the files in [`supabase/migrations/`](supabase/migrations) that you haven't run yet, in order (002 → 009).
+   - **Upgrading an older project?** Instead, run the files in [`supabase/migrations/`](supabase/migrations) that you haven't run yet, in order (002 → 010).
 3. Go to **Authentication → Sign In / Providers → Email**. Make sure sign-ups are allowed, and turn **off** "Confirm email".
 4. Go to **Project Settings → API Keys** and copy:
    - the Project URL
@@ -224,7 +239,7 @@ They create temporary users and tournaments and delete them at the end.
 
 ```
 supabase/schema.sql              full database: tables, security rules, auction / scoring / admin functions
-supabase/migrations/             step-by-step upgrades (002-009) for existing projects
+supabase/migrations/             step-by-step upgrades (002-010) for existing projects
 src/lib/fixtures.ts              fixture generation, scheduling, points table, NRR, knockout progression
 src/lib/scoring.ts               ball-by-ball engine: replays events into innings, scorecards, stats
 src/lib/hooks.ts                 live data hooks (auction, matches, scoring, stats) with realtime + fallback refresh

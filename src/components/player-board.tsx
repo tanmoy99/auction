@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { ChevronRight, Search } from "lucide-react";
 import { rupees } from "@/lib/format";
 import type { AuctionState, Player, Team } from "@/lib/types";
-import { Avatar, Input, TeamDot, cn } from "./ui";
+import { Avatar, Input, RoleBadges, TeamDot, cn } from "./ui";
 
 type Filter = "remaining" | "sold" | "unsold" | "all";
 
@@ -108,6 +108,7 @@ export function PlayerBoard({ players, teams, state, myTeamId }: { players: Play
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1.5 truncate text-sm font-medium text-slate-900">
                     <span className="truncate">{p.name}</span>
+                    {p.status === "sold" && <RoleBadges player={p} />}
                     {p.category && <span className="shrink-0 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-800">{p.category}</span>}
                   </p>
                   <p className="truncate text-xs text-slate-500">{[p.role, p.city].filter(Boolean).join(" · ") || "Player"}</p>

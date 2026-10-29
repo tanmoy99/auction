@@ -2,12 +2,26 @@
 
 import { useState } from "react";
 import { ArrowLeftRight, Flag, Undo2 } from "lucide-react";
-import type { Scoreboard } from "@/components/scorecard";
+import { breakText, type Scoreboard } from "@/components/scorecard";
 import { toast } from "@/components/toast";
 import { Button, Card, Field, Modal, Select, TeamDot, cn } from "@/components/ui";
 import { decideResult, resolveTeams, type FixtureSettings, type Match } from "@/lib/fixtures";
 import { supabase } from "@/lib/supabase";
-import { WICKET_KINDS, availableBatters, availableBowlers, ballsText, matchStats, resultScores, type EventData, type Extra, type WicketKind } from "@/lib/scoring";
+import {
+  WICKET_KINDS,
+  availableBatters,
+  availableBowlers,
+  ballsText,
+  canEnforceFollowOn,
+  inningsSummary,
+  matchStats,
+  nextBattingTeam,
+  resultScores,
+  testResult,
+  type EventData,
+  type Extra,
+  type WicketKind,
+} from "@/lib/scoring";
 
 type Send = (data: EventData) => Promise<void>;
 
@@ -60,17 +74,13 @@ function Choice({ active, onClick, children, disabled }: { active: boolean; onCl
   );
 }
 
-// Batting side for the next innings: from the toss for the 1st, the other side for the 2nd
-function nextBattingTeam(match: Match, board: Scoreboard) {
-  const { state } = board;
-  if (state.innings.length === 1) return state.innings[0]!.bowling_team;
-  const toss = state.toss!;
-  const other = toss.winner === match.team_a_id ? match.team_b_id! : match.team_a_id!;
-  return toss.decision === "bat" ? toss.winner : other;
-}
+const ORDINAL = ["1st", "2nd", "3rd", "4th"];
 
 export function OpenersPanel({ match, board, send }: { match: Match; board: Scoreboard; send: Send }) {
-  const batting = nextBattingTeam(match, board);
+  // Tests: after both first innings, the side ahead by enough may make the other bat again
+  const followOnChoice = canEnforceFollowOn(board.state, board.rules);
+  const [followOn, setFollowOn] = useState(false);
+  const batting = nextBattingTeam(board.state, match.team_a_id!, match.team_b_id!, followOnChoice && followOn);
   const bowling = batting === match.team_a_id ? match.team_b_id! : match.team_a_id!;
   const [striker, setStriker] = useState("");
   const [nonStriker, setNonStriker] = useState("");
@@ -78,20 +88,50 @@ export function OpenersPanel({ match, board, send }: { match: Match; board: Scor
   const bat = board.lineups[batting] ?? [];
   const bowl = board.lineups[bowling] ?? [];
   const number = board.state.innings.length + 1;
+  const chasing = number === board.rules.innings_per_side * 2;
+  const leader = board.state.innings[0];
   return (
     <Card className="space-y-4 p-5">
       <div>
-        <h2 className="text-lg font-bold text-slate-900">{number === 1 ? "1st innings" : "2nd innings"}</h2>
+        <h2 className="text-lg font-bold text-slate-900">{ORDINAL[number - 1]} innings</h2>
         <p className="text-sm text-slate-500">
-          {board.team(batting)?.name} bat{number === 2 && board.state.target ? ` · target ${board.state.target}` : ""}
+          {board.team(batting)?.name} bat{chasing && board.state.target ? ` · target ${board.state.target}` : ""}
         </p>
       </div>
+      {followOnChoice && leader && (
+        <Field label={`${board.team(leader.batting_team)?.name} lead by ${leader.runs - board.state.innings[1]!.runs}. Enforce the follow-on?`}>
+          <div className="grid grid-cols-2 gap-2">
+            <Choice
+              active={!followOn}
+              onClick={() => {
+                setFollowOn(false);
+                setStriker("");
+                setNonStriker("");
+                setBowler("");
+              }}
+            >
+              No, bat again
+            </Choice>
+            <Choice
+              active={followOn}
+              onClick={() => {
+                setFollowOn(true);
+                setStriker("");
+                setNonStriker("");
+                setBowler("");
+              }}
+            >
+              Yes, they follow on
+            </Choice>
+          </div>
+        </Field>
+      )}
       <Field label="On strike">
         <Select value={striker} onChange={(e) => setStriker(e.target.value)}>
           <option value="">Choose batter</option>
           {bat.map((id) => (
             <option key={id} value={id} disabled={id === nonStriker}>
-              {board.name(id)}
+              {board.label(id)}
             </option>
           ))}
         </Select>
@@ -101,7 +141,7 @@ export function OpenersPanel({ match, board, send }: { match: Match; board: Scor
           <option value="">Choose batter</option>
           {bat.map((id) => (
             <option key={id} value={id} disabled={id === striker}>
-              {board.name(id)}
+              {board.label(id)}
             </option>
           ))}
         </Select>
@@ -111,7 +151,7 @@ export function OpenersPanel({ match, board, send }: { match: Match; board: Scor
           <option value="">Choose bowler</option>
           {bowl.map((id) => (
             <option key={id} value={id}>
-              {board.name(id)}
+              {board.label(id)}
             </option>
           ))}
         </Select>
@@ -120,7 +160,17 @@ export function OpenersPanel({ match, board, send }: { match: Match; board: Scor
         size="lg"
         className="w-full"
         disabled={!striker || !nonStriker || !bowler}
-        onClick={() => send({ type: "innings_start", batting_team: batting, bowling_team: bowling, striker, non_striker: nonStriker, bowler })}
+        onClick={() =>
+          send({
+            type: "innings_start",
+            batting_team: batting,
+            bowling_team: bowling,
+            striker,
+            non_striker: nonStriker,
+            bowler,
+            ...(followOnChoice && followOn ? { follow_on: true } : {}),
+          })
+        }
       >
         Start innings
       </Button>
@@ -139,7 +189,7 @@ export function PickPanel({ kind, board, send }: { kind: "batter" | "bowler"; bo
         <div className="grid gap-2 sm:grid-cols-2">
           {list.map((id) => (
             <Button key={id} variant="secondary" size="lg" onClick={() => send({ type: "new_batter", player: id })}>
-              {board.name(id)}
+              {board.label(id)}
               {inn.batters.find((b) => b.id === id)?.retired && " (returning)"}
             </Button>
           ))}
@@ -162,7 +212,7 @@ export function PickPanel({ kind, board, send }: { kind: "batter" | "bowler"; bo
             onClick={() => send({ type: "new_bowler", player: b.id })}
             className="flex-col items-start! gap-0!"
           >
-            <span>{board.name(b.id)}</span>
+            <span>{board.label(b.id)}</span>
             <span className="text-xs font-normal text-slate-500">{b.reason ?? `${b.overs} overs`}</span>
           </Button>
         ))}
@@ -308,7 +358,7 @@ function WicketModal({
               <div className="grid grid-cols-2 gap-2">
                 {[inn.striker, inn.non_striker].map((id) => (
                   <Choice key={id} active={out === id} onClick={() => setOut(id!)}>
-                    {board.name(id)}
+                    {board.label(id)}
                   </Choice>
                 ))}
               </div>
@@ -330,7 +380,7 @@ function WicketModal({
               <option value="">Choose player</option>
               {fielders.map((id) => (
                 <option key={id} value={id}>
-                  {board.name(id)}
+                  {board.label(id)}
                   {id === inn.bowler ? " (bowler)" : ""}
                 </option>
               ))}
@@ -352,18 +402,20 @@ function WicketModal({
 }
 
 export function InningsBreak({ board, onStart }: { board: Scoreboard; onStart: () => void }) {
-  const first = board.state.innings[0]!;
+  const last = board.state.current!;
+  const test = board.rules.format === "test";
   return (
     <Card className="space-y-3 p-5 text-center">
-      <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">Innings break</p>
+      <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">{test ? `End of ${ORDINAL[last.number - 1]} innings` : "Innings break"}</p>
       <p className="text-3xl font-black text-slate-900">
-        {board.team(first.batting_team)?.name} {first.runs}/{first.wickets}
+        {board.team(last.batting_team)?.name} {last.runs}/{last.wickets}
+        {test && last.end_reason === "declared" ? "d" : ""}
       </p>
       <p className="text-slate-600">
-        {ballsText(first.legal_balls)} overs · target <span className="font-bold text-slate-900">{board.state.target}</span>
+        {ballsText(last.legal_balls)} overs · <span className="font-bold text-slate-900">{test ? breakText(board) : `target ${board.state.target}`}</span>
       </p>
       <Button size="lg" className="w-full" onClick={onStart}>
-        Start 2nd innings
+        Start {ORDINAL[last.number]} innings
       </Button>
     </Card>
   );
@@ -387,13 +439,16 @@ export function FinishPanel({
   const [saving, setSaving] = useState(false);
   const knockout = match.stage === "knockout";
   const name = (id: string | null) => board.team(id)?.name ?? "Team";
+  const test = board.rules.format === "test";
   const scores = resultScores(board.state, match.team_a_id!);
-  const tied = !noResult && !!scores && scores.a_runs === scores.b_runs;
+  const tied = !test && !noResult && !!scores && scores.a_runs === scores.b_runs;
   const result =
     noResult || !scores
       ? decideResult(match, { outcome: "no_result", batting_first: "a", a_runs: null, a_wickets: null, a_balls: null, b_runs: null, b_wickets: null, b_balls: null, winner_team_id: winner || null }, board.rules, name)
-      : decideResult(match, { outcome: "win", winner_team_id: tied ? winner || null : null, ...scores }, board.rules, name);
-  const needsWinner = knockout && (tied || noResult) && !winner;
+      : test
+        ? testResult(board.state, board.rules, board.lineups, name)
+        : decideResult(match, { outcome: "win", winner_team_id: tied ? winner || null : null, ...scores }, board.rules, name);
+  const needsWinner = knockout && !test && (tied || noResult) && !winner;
 
   async function finish() {
     if (needsWinner) return toast(tied ? "Pick who won the super over" : "Pick the team that goes through", "error");
@@ -411,6 +466,7 @@ export function FinishPanel({
       b_wickets: noResult ? null : (scores?.b_wickets ?? null),
       b_balls: noResult ? null : (scores?.b_balls ?? null),
       result_text: result.text,
+      innings: test && !noResult ? inningsSummary(board.state) : null,
     };
     const updated = ((all as Match[]) ?? []).map((m) => (m.id === match.id ? { ...m, ...patch } : m));
     const ok = await call("scorer_finish", {
@@ -428,7 +484,7 @@ export function FinishPanel({
         <Flag className="mx-auto size-8 text-emerald-600" />
         <p className="mt-2 text-xl font-black text-slate-900">{result.text}</p>
       </div>
-      {(tied || (noResult && knockout)) && (
+      {!test && (tied || (noResult && knockout)) && (
         <Field label={tied ? (knockout ? "Scores level. Who won the super over?" : "Scores level. Super over winner (optional)") : "Who goes through?"}>
           <Select value={winner} onChange={(e) => setWinner(e.target.value)}>
             <option value="">{tied && !knockout ? "No super over (tie)" : "Choose team"}</option>

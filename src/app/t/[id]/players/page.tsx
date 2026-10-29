@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Pencil, Plus, Search, Shield, Trash2, Undo2, Upload, UserRound, X } from "lucide-react";
 import { useTournament } from "@/components/tournament-context";
 import { toast } from "@/components/toast";
-import { Avatar, Button, Card, EmptyState, Field, Input, Modal, Select, StatusBadge, TeamDot, cn } from "@/components/ui";
+import { Avatar, Button, Card, EmptyState, Field, Input, Modal, RoleBadges, Select, StatusBadge, TeamDot, cn } from "@/components/ui";
 import { errorMessage, rupees } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import type { Player, PlayerStatus } from "@/lib/types";
@@ -151,6 +151,7 @@ export default function PlayersPage() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium text-slate-900">
                     {p.name}
+                    {p.status === "sold" && <RoleBadges player={p} className="ml-2 align-middle" />}
                     {p.category && <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{p.category}</span>}
                   </p>
                   <p className="truncate text-sm text-slate-500">

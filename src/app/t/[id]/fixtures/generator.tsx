@@ -8,6 +8,7 @@ import { Button, Card, Field, Input, TeamDot, cn } from "@/components/ui";
 import {
   DEFAULT_SETTINGS,
   GROUP_NAMES,
+  OVERS_PRESETS,
   dealGroups,
   generateFixtures,
   playoffTeams,
@@ -230,7 +231,16 @@ export function FixtureGenerator({ tournament: t, teams, onCreated }: { tourname
             </div>
           )}
 
-          <div className="grid gap-4 border-t border-slate-100 pt-4 sm:grid-cols-5">
+          <div className="border-t border-slate-100 pt-4">
+            <p className="mb-2 text-sm font-medium text-slate-700">Match length</p>
+            <Choice
+              value={OVERS_PRESETS.some((p) => p.overs === s.overs) ? s.overs : 0}
+              options={[...OVERS_PRESETS.map((p) => ({ key: p.overs, label: p.label, hint: p.hint })), { key: 0, label: "Custom", hint: "Set the overs below" }]}
+              onChange={(overs) => overs && set({ overs, scoring: { ...s.scoring, max_bowler_overs: overs / 5 } })}
+            />
+            <p className="mt-2 text-xs text-slate-500">Multi-day Test matches are made separately, on the Test matches tab.</p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-5">
             <Field label="Overs per side">
               <Input type="number" min={1} max={50} value={s.overs} onChange={(e) => set({ overs: Number(e.target.value) })} />
             </Field>

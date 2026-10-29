@@ -201,5 +201,171 @@ test("match stats and result: batting, bowling, fielding, winner text", () => {
   assert(res.winner === "B" && res.text === "Team B won by 10 wickets", res.text);
 });
 
+console.log("\nTest matches (multi-day)");
+
+// 3-player XIs, so a side is all out after 2 wickets
+function testMatch(days = 5) {
+  const r = S.matchRules({}, { match_type: "test", days });
+  const events = [];
+  const add = (data) => events.push({ seq: events.length + 1, data });
+  const ls = lineups(3);
+  const api = {
+    r,
+    events,
+    lineups: ls,
+    state: () => S.replay(events, r, ls),
+    toss: () => (add({ type: "toss", winner: "A", decision: "bat" }), api),
+    start: (bat, followOn = false) => {
+      const p = bat === "A" ? "a" : "b";
+      const q = bat === "A" ? "b" : "a";
+      add({ type: "innings_start", batting_team: bat, bowling_team: bat === "A" ? "B" : "A", striker: `${p}1`, non_striker: `${p}2`, bowler: `${q}1`, ...(followOn ? { follow_on: true } : {}) });
+      return api;
+    },
+    raw: (data) => (add(data), api),
+    // score runs in sixes (and one smaller shot), changing bowlers at the end of each over
+    runs: (total) => {
+      while (total > 0) {
+        const shot = total >= 6 ? 6 : total;
+        add({ type: "ball", runs: shot, extra: null, extra_runs: 0, wicket: null });
+        total -= shot;
+        api.overCheck();
+      }
+      return api;
+    },
+    overCheck: () => {
+      const s = api.state();
+      if (s.next === "new_bowler") {
+        const bowling = s.current.bowling_team === "A" ? "a" : "b";
+        add({ type: "new_bowler", player: s.current.last_over_bowler === `${bowling}1` ? `${bowling}2` : `${bowling}1` });
+      }
+    },
+    // two wickets: the side is all out
+    allOut: () => {
+      for (let i = 0; i < 2; i++) {
+        const s = api.state();
+        add({ type: "ball", runs: 0, extra: null, extra_runs: 0, wicket: { kind: "bowled", out: s.current.striker, fielder: null } });
+        api.overCheck();
+        const after = api.state();
+        if (after.next === "new_batter") {
+          const p = after.current.batting_team === "A" ? "a" : "b";
+          const next = S.availableBatters(after.current, ls[after.current.batting_team])[0] ?? `${p}3`;
+          add({ type: "new_batter", player: next });
+          api.overCheck();
+        }
+      }
+      return api;
+    },
+  };
+  return api;
+}
+const name = (id) => `Team ${id}`;
+
+test("Test rules: no overs limit, no free hit, follow-on lead by match length", () => {
+  const r5 = S.matchRules({ overs: 20 }, { match_type: "test", days: 5 });
+  assert(r5.overs === 0 && r5.innings_per_side === 2 && !r5.free_hit && r5.max_bowler_overs === 0, JSON.stringify(r5));
+  assert(r5.follow_on === 200 && S.matchRules({}, { match_type: "test", days: 3 }).follow_on === 150, "5 / 3 days");
+  assert(S.matchRules({}, { match_type: "test", days: 2 }).follow_on === 100 && S.matchRules({}, { match_type: "test", days: 1 }).follow_on === 75, "2 / 1 days");
+  const limited = S.matchRules({ overs: 20 }, { match_type: "limited" });
+  assert(limited.overs === 20 && limited.innings_per_side === 1 && limited.format === "limited", "limited untouched");
+});
+
+test("an innings never ends on overs; each side bats twice; no target until the 4th innings", () => {
+  const m = testMatch().toss().start("A").runs(150);
+  assert(m.state().next === "ball", `still batting after 25 overs: ${m.state().next}`);
+  m.allOut();
+  let s = m.state();
+  assert(s.next === "innings_break" && s.target === null, `${s.next} ${s.target}`);
+  m.start("B").runs(100).allOut();
+  s = m.state();
+  assert(s.next === "innings_break" && S.leadOf(s) === -50 && s.target === null, `lead ${S.leadOf(s)} next ${s.next} target ${s.target}`);
+  assert(!S.canEnforceFollowOn(s, m.r), "lead of 50 is not enough to enforce the follow-on");
+  assert(S.nextBattingTeam(s, "A", "B") === "A", "A bats 3rd");
+  m.start("A").runs(20).allOut();
+  s = m.state();
+  assert(s.next === "innings_break" && S.nextBattingTeam(s, "A", "B") === "B", "B bats 4th");
+  m.start("B");
+  assert(m.state().target === 71, `target ${m.state().target}`);
+});
+
+test("4th innings chase: reaching the target wins by wickets", () => {
+  const m = testMatch().toss().start("A").runs(30).allOut().start("B").runs(20).allOut().start("A").runs(10).allOut().start("B");
+  m.runs(21);
+  const s = m.state();
+  assert(s.next === "finished", s.next);
+  const res = S.testResult(s, m.r, m.lineups, name);
+  assert(res.outcome === "win" && res.winner === "B" && res.text === "Team B won by 2 wickets", res.text);
+});
+
+test("4th innings all out short: the side batting 3rd wins by runs", () => {
+  const m = testMatch().toss().start("A").runs(30).allOut().start("B").runs(20).allOut().start("A").runs(10).allOut().start("B").runs(12).allOut();
+  const res = S.testResult(m.state(), m.r, m.lineups, name);
+  assert(res.winner === "A" && res.text === "Team A won by 8 runs", res.text);
+});
+
+test("follow-on enforced, then an innings win", () => {
+  const m = testMatch(1).toss().start("A").runs(90).allOut().start("B").runs(10).allOut();
+  let s = m.state();
+  assert(S.canEnforceFollowOn(s, m.r), "an 80-run lead in a 1-day Test allows the follow-on");
+  assert(S.nextBattingTeam(s, "A", "B", true) === "B", "B follows on");
+  m.start("B", true).runs(5).allOut();
+  s = m.state();
+  assert(s.innings[2].follow_on && s.next === "finished", `${s.next}`);
+  const res = S.testResult(s, m.r, m.lineups, name);
+  assert(res.winner === "A" && res.text === "Team A won by an innings and 75 runs", res.text);
+  assert(S.testScoreText(S.inningsSummary(s), "B", 2) === "10 & 5 (f/o)", S.testScoreText(S.inningsSummary(s), "B", 2));
+});
+
+test("declaration ends the innings and shows as d", () => {
+  const m = testMatch().toss().start("A").runs(40).raw({ type: "end_innings" });
+  const s = m.state();
+  assert(s.next === "innings_break" && s.innings[0].end_reason === "declared", s.next);
+  assert(S.testScoreText(S.inningsSummary(s), "A", 2) === "40/0d", S.testScoreText(S.inningsSummary(s), "A", 2));
+});
+
+test("stumps moves to the next day; lunch shows until the next ball", () => {
+  const m = testMatch().toss().start("A").runs(12);
+  m.raw({ type: "break", kind: "lunch" });
+  assert(m.state().on_break === "lunch", "lunch");
+  m.runs(6);
+  assert(m.state().on_break === null, "lunch over after the next ball");
+  m.raw({ type: "stumps" }).raw({ type: "stumps" });
+  let s = m.state();
+  assert(s.stumps && s.day === 2 && s.day_balls === 0, `day ${s.day}`);
+  m.runs(6);
+  s = m.state();
+  assert(!s.stumps && s.day === 2 && s.day_balls === 1, `day balls ${s.day_balls}`);
+  const live = S.liveScore(s, m.r);
+  assert(live.test.day === 2 && live.test.scores.length === 1 && live.overs === 0, JSON.stringify(live));
+});
+
+test("end as a draw, and undo brings the match back", () => {
+  const m = testMatch().toss().start("A").runs(50).allOut().start("B").runs(30);
+  m.raw({ type: "end_match" });
+  const s = m.state();
+  assert(s.next === "finished" && s.drawn, s.next);
+  assert(S.testResult(s, m.r, m.lineups, name).outcome === "draw", "draw");
+  const undone = S.replay(m.events.slice(0, -1), m.r, m.lineups);
+  assert(undone.next === "ball" && !undone.drawn, undone.next);
+});
+
+test("Test stats: one row per innings for a player who batted twice", () => {
+  const m = testMatch().toss().start("A").runs(30).allOut().start("B").runs(20).allOut().start("A").runs(12).allOut();
+  const stats = S.matchStats(m.state(), m.lineups);
+  const a1 = stats.filter((x) => x.match_player_id === "a1").sort((x, y) => x.innings - y.innings);
+  assert(a1.length === 2 && a1[0].innings === 1 && a1[1].innings === 2, JSON.stringify(a1));
+  assert(a1[0].bat_runs === 30 && a1[1].bat_runs === 12 && a1[0].out && a1[1].out, "runs per innings");
+  const b1 = stats.filter((x) => x.match_player_id === "b1");
+  assert(b1.length === 2 && b1.some((x) => x.innings === 2 && x.bowl_balls > 0), "b1 bowled in A's 2nd innings");
+  const totals = S.resultScores(m.state(), "A");
+  assert(totals.a_runs === 42 && totals.b_runs === 20, JSON.stringify(totals));
+});
+
+test("limited-overs stats keep one row per player", () => {
+  const m = match().toss().start();
+  m.ball(4).ball(1);
+  const stats = S.matchStats(m.state(), m.lineups);
+  assert(stats.length === 22 && stats.every((x) => x.innings === 1), `${stats.length}`);
+});
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

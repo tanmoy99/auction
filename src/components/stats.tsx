@@ -31,9 +31,11 @@ export type PlayerTotals = {
   run_outs: number;
 };
 
-// Adds up every finished match per player (auction player, or guest)
+// Adds up every finished match per player (auction player, or guest).
+// A Test gives a player one row per innings, so matches are counted by match id.
 export function tournamentTotals(rows: PlayerStatRow[]) {
   const map = new Map<string, PlayerTotals>();
+  const seen = new Set<string>();
   for (const r of rows) {
     const key = r.player_id ?? r.guest_id ?? `${r.team_id}:${r.name}`;
     let t = map.get(key);
@@ -63,7 +65,10 @@ export function tournamentTotals(rows: PlayerStatRow[]) {
       };
       map.set(key, t);
     }
-    t.matches++;
+    if (!seen.has(`${key}:${r.match_id}`)) {
+      seen.add(`${key}:${r.match_id}`);
+      t.matches++;
+    }
     if (r.did_bat) {
       t.innings++;
       t.runs += r.bat_runs;

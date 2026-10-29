@@ -3,15 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Clock, Copy, ExternalLink, Lock, MessageCircle, Plus, RefreshCw, Trash2, UserPlus } from "lucide-react";
+import { ArrowLeft, Clock, Copy, ExternalLink, Lock, MessageCircle, Pencil, Plus, RefreshCw, Trash2, UserPlus } from "lucide-react";
 import { PlayerFields, emptyPlayerForm, playerFormData, type PlayerFormValues } from "@/components/player-fields";
 import { toast } from "@/components/toast";
-import { Avatar, Button, Card, EmptyState, Modal, PageLoader } from "@/components/ui";
+import { Avatar, Button, Card, EmptyState, Field, Modal, PageLoader, RoleBadges, Select, cn } from "@/components/ui";
 import { errorMessage, rupees } from "@/lib/format";
 import { useTournamentLive, useUser } from "@/lib/hooks";
 import { compressImage } from "@/lib/image";
 import { authHeader, supabase } from "@/lib/supabase";
-import type { Team, Tournament } from "@/lib/types";
+import { ROLES, squadOrder, type Player, type Team, type Tournament } from "@/lib/types";
 
 const ADDED_BY_TEAM = ["team-owner", "team-link"];
 
@@ -24,13 +24,14 @@ export default function OwnerSquadPage() {
   const { tournament: t, teams, players, loading } = useTournamentLive(id);
   const [asking, setAsking] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [rolesFor, setRolesFor] = useState<Player | null>(null);
 
   useEffect(() => {
     if (!userLoading && !user) router.replace("/login");
   }, [userLoading, user, router]);
 
   const myTeam = teams.find((x) => x.owner_user_id === user?.id) ?? null;
-  const squad = useMemo(() => players.filter((p) => p.team_id === myTeam?.id && p.status === "sold"), [players, myTeam]);
+  const squad = useMemo(() => players.filter((p) => p.team_id === myTeam?.id && p.status === "sold").sort(squadOrder), [players, myTeam]);
 
   if (loading || userLoading) return <PageLoader />;
   if (!t || !myTeam)
@@ -104,7 +105,14 @@ export default function OwnerSquadPage() {
         )}
 
         <Card>
-          <h2 className="border-b border-slate-100 px-4 py-3 text-sm font-semibold text-slate-900">My squad ({squad.length})</h2>
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold text-slate-900">My squad ({squad.length})</h2>
+            {squad.length > 0 && (
+              <p className="text-xs text-slate-500">
+                Tap <Pencil className="inline size-3" /> to set a player&apos;s role, and pick your captain (C), vice-captain (VC) and wicket-keeper (WK).
+              </p>
+            )}
+          </div>
           {squad.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-400">No players yet</p>
           ) : (
@@ -115,11 +123,17 @@ export default function OwnerSquadPage() {
                   <li key={p.id} className="flex items-center gap-3 px-4 py-2.5">
                     <Avatar name={p.name} src={p.photo_url} size={32} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-slate-800">{p.name}</p>
+                      <p className="flex items-center gap-1.5 text-sm font-medium text-slate-800">
+                        <span className="truncate">{p.name}</span>
+                        <RoleBadges player={p} />
+                      </p>
                       <p className="truncate text-xs text-slate-500">
                         {[p.role, ours ? "Added by team" : `Bought for ${rupees(p.sold_price)}`].filter(Boolean).join(" · ")}
                       </p>
                     </div>
+                    <button onClick={() => setRolesFor(p)} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Role, captain, keeper">
+                      <Pencil className="size-4" />
+                    </button>
                     {ours && myTeam.player_access === "approved" && (
                       <button onClick={() => remove(p.id, p.name)} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-rose-600" title="Remove">
                         <Trash2 className="size-4" />
@@ -134,6 +148,7 @@ export default function OwnerSquadPage() {
       </main>
 
       {adding && <AddPlayerModal team={myTeam} onClose={() => setAdding(false)} />}
+      {rolesFor && <SquadRoleModal key={rolesFor.id} player={rolesFor} squad={squad} onClose={() => setRolesFor(null)} />}
     </div>
   );
 }
@@ -249,6 +264,76 @@ function AddPlayerModal({ team, onClose }: { team: Team; onClose: () => void }) 
           </Button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// Playing role plus captain / vice-captain / keeper. Each mark belongs to one player, so picking it moves it here.
+function SquadRoleModal({ player, squad, onClose }: { player: Player; squad: Player[]; onClose: () => void }) {
+  const [role, setRole] = useState(player.role ?? "");
+  const [captain, setCaptain] = useState(!!player.is_captain);
+  const [vice, setVice] = useState(!!player.is_vice_captain);
+  const [keeper, setKeeper] = useState(!!player.is_keeper);
+  const [saving, setSaving] = useState(false);
+  const holder = (key: "is_captain" | "is_vice_captain" | "is_keeper") => squad.find((x) => x[key] && x.id !== player.id)?.name;
+
+  async function save() {
+    setSaving(true);
+    const { error } = await supabase.rpc("set_player_role", { p_player: player.id, p_role: role || null, p_captain: captain, p_vice: vice, p_keeper: keeper });
+    setSaving(false);
+    if (error) return toast(errorMessage(error), "error");
+    toast(`${player.name} updated`, "success");
+    onClose();
+  }
+
+  const mark = (on: boolean, set: (v: boolean) => void, label: string, taken: string | undefined, disabled = false) => (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => set(!on)}
+      className={cn(
+        "flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left text-sm transition disabled:opacity-40",
+        on ? "border-amber-500 bg-amber-50 ring-1 ring-amber-500" : "border-slate-200 hover:bg-slate-50",
+      )}
+    >
+      <span>
+        <span className="font-semibold text-slate-900">{label}</span>
+        {taken && !on && <span className="block text-xs text-slate-500">Now: {taken}</span>}
+        {taken && on && <span className="block text-xs text-amber-700">Moves from {taken}</span>}
+      </span>
+      <span className={cn("rounded-full px-2 py-0.5 text-xs font-bold", on ? "bg-amber-400 text-amber-950" : "bg-slate-100 text-slate-400")}>{on ? "Yes" : "No"}</span>
+    </button>
+  );
+
+  return (
+    <Modal open onClose={onClose} title={player.name}>
+      <div className="space-y-4">
+        <Field label="Playing role">
+          <Select value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="">Not set</option>
+            {ROLES.map((r) => (
+              <option key={r}>{r}</option>
+            ))}
+          </Select>
+        </Field>
+        <div className="space-y-2">
+          {mark(captain, (v) => {
+            setCaptain(v);
+            if (v) setVice(false);
+          }, "Captain (C)", holder("is_captain"))}
+          {mark(vice, setVice, "Vice-captain (VC)", holder("is_vice_captain"), captain)}
+          {mark(keeper, setKeeper, "Wicket-keeper (WK)", holder("is_keeper"))}
+        </div>
+        <p className="text-xs text-slate-500">Shown on the squads page and pre-filled in each match&apos;s playing XI (the scorer can still change it).</p>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={save} loading={saving}>
+            Save
+          </Button>
+        </div>
+      </div>
     </Modal>
   );
 }

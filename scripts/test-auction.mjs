@@ -70,7 +70,7 @@ async function main() {
   const owners = {};
   for (const k of ["a", "b", "c", "d"]) owners[k] = await makeUser(`owner-${k}`, "owner");
 
-  let t, t2, t3, t4, t5, t6, teams, players;
+  let t, t2, t3, t4, t5, t6, t7, teams, players;
   const db = org.client;
   const rpc = (client, fn, args) => client.rpc(fn, args);
   const state = async () => ok(admin.from("auction_state").select("*").eq("tournament_id", t.id).single());
@@ -890,8 +890,123 @@ async function main() {
         });
       }
     }
+    console.log("\nTest matches and squad roles (needs migration 010)");
+    const has010 = !(await admin.from("players").select("is_captain").limit(1)).error;
+    if (!has010) {
+      console.log("  \x1b[33m- skipped: run supabase/migrations/010_tests_and_roles.sql in Supabase first\x1b[0m");
+    } else {
+      t7 = await ok(db.from("tournaments").insert({ name: `TEST7 ${RUN}`, fixture_settings: { format: "league", overs: 5, wickets: 10, points: { win: 2, tie: 1, no_result: 1 } } }).select().single());
+      const [T1, T2] = await ok(
+        db.from("teams").insert([
+          { tournament_id: t7.id, name: "Test One", purse: 10000, owner_user_id: owners.d.user.id },
+          { tournament_id: t7.id, name: "Test Two", purse: 10000, owner_user_id: owners.b.user.id },
+        ]).select(),
+      );
+      const sq = await ok(
+        admin
+          .from("players")
+          .insert([T1, T1, T1, T2, T2, T2].map((tm, i) => ({ tournament_id: t7.id, name: `Q${i + 1}`, status: "sold", team_id: tm.id, sold_price: 500, base_price: 500 })))
+          .select(),
+      );
+      const role = (client, p, r, c = false, v = false, k = false) =>
+        rpc(client, "set_player_role", { p_player: p.id, p_role: r, p_captain: c, p_vice: v, p_keeper: k });
+      const pl = async (id) => ok(admin.from("players").select("*").eq("id", id).single());
+
+      await test("team owner sets a player's role and makes them captain", async () => {
+        await ok(role(owners.d.client, sq[0], "Bowler", true));
+        const p = await pl(sq[0].id);
+        assert(p.role === "Bowler" && p.is_captain && !p.is_keeper, JSON.stringify(p));
+      });
+      await test("there is one captain, one vice-captain and one keeper per team", async () => {
+        await ok(role(owners.d.client, sq[1], "Batsman", true, false, true));
+        assert(!(await pl(sq[0].id)).is_captain && (await pl(sq[1].id)).is_captain, "captaincy did not move");
+        await ok(role(owners.d.client, sq[2], "Wicket-keeper", false, true, true));
+        const [b, c] = [await pl(sq[1].id), await pl(sq[2].id)];
+        assert(!b.is_keeper && c.is_keeper && c.is_vice_captain, "keeper did not move");
+        await fails(role(owners.d.client, sq[0], null, true, true), /different players/i);
+        await fails(role(owners.d.client, sq[0], "Umpire"), /unknown role/i);
+      });
+      await test("other owners and the public can't set roles; the organiser can", async () => {
+        await fails(role(owners.b.client, sq[0], "Bowler", true), /owner or the organiser/i);
+        await fails(role(anon, sq[0], "Bowler", true), /permission|owner or the organiser/i);
+        await fails(owners.d.client.from("players").update({ is_captain: true }).eq("id", sq[0].id).select().single(), /row|0 rows|JSON object/i);
+        await ok(role(db, sq[3], "All-rounder", true));
+        assert((await pl(sq[3].id)).is_captain, "organiser could not set the captain");
+      });
+      await test("a released player loses captain / keeper marks", async () => {
+        await ok(rpc(db, "release_player", { p_player: sq[2].id }));
+        const p = await pl(sq[2].id);
+        assert(!p.is_keeper && !p.is_vice_captain && p.team_id === null, JSON.stringify(p));
+        await ok(rpc(db, "assign_player", { p_player: sq[2].id, p_team: T1.id, p_price: 500 }));
+      });
+
+      const tm = await ok(
+        db.from("matches").insert({ tournament_id: t7.id, match_no: 1, stage: "league", round: 1, round_name: "1st Test", team_a_id: T1.id, team_b_id: T2.id, match_type: "test", days: 3 }).select().single(),
+      );
+      const lm = await ok(db.from("matches").insert({ tournament_id: t7.id, match_no: 2, stage: "league", round: 1, round_name: "Match 2", team_a_id: T1.id, team_b_id: T2.id }).select().single());
+      const T = { p_match: tm.id, p_pin: "", p_device: "org-phone" };
+      const L = { p_match: lm.id, p_pin: "", p_device: "org-phone" };
+      const tev = (args, seq, data) => rpc(db, "scorer_event", { ...args, p_seq: seq, p_type: data.type, p_data: data, p_live: null });
+
+      await test("matches are one-day by default; a Test has 1 to 5 days", async () => {
+        assert(lm.match_type === "limited" && tm.match_type === "test" && tm.days === 3, `${lm.match_type} ${tm.match_type}`);
+        await fails(db.from("matches").insert({ tournament_id: t7.id, match_no: 3, stage: "league", round: 1, round_name: "x", match_type: "test", days: 6 }), /check/i);
+        await fails(db.from("matches").insert({ tournament_id: t7.id, match_no: 3, stage: "league", round: 1, round_name: "x", match_type: "hundred" }), /check/i);
+      });
+      await test("playing XI keeps the captain and keeper; only one of each", async () => {
+        await ok(rpc(db, "scorer_claim", { p_match: tm.id, p_pin: "", p_device: "org-phone", p_name: "Organiser" }));
+        await ok(rpc(db, "scorer_claim", { p_match: lm.id, p_pin: "", p_device: "org-phone", p_name: "Organiser" }));
+        const xi = (list, cap, wk) => list.map((p, i) => ({ player_id: p.id, name: p.name, role: "Batsman", is_captain: i === cap, is_keeper: i === wk }));
+        await fails(rpc(db, "scorer_lineup", { ...T, p_team: T1.id, p_players: xi(sq.slice(0, 3), 0, 1).map((x) => ({ ...x, is_captain: true })) }), /one captain/i);
+        await ok(rpc(db, "scorer_lineup", { ...T, p_team: T1.id, p_players: xi(sq.slice(0, 3), 1, 2) }));
+        await ok(rpc(db, "scorer_lineup", { ...T, p_team: T2.id, p_players: xi(sq.slice(3), 0, 1) }));
+        const rows = await ok(anon.from("match_players").select("*").eq("match_id", tm.id).eq("team_id", T1.id).order("sort"));
+        assert(rows[1].is_captain && rows[2].is_keeper && !rows[0].is_captain, JSON.stringify(rows.map((r) => [r.is_captain, r.is_keeper])));
+      });
+      await test("stumps, breaks and end-as-draw are for Test matches only", async () => {
+        await fails(tev(L, 1, { type: "stumps" }), /only for test/i);
+        await fails(tev(L, 1, { type: "end_match" }), /only for test/i);
+        const mp = await ok(admin.from("match_players").select("*").eq("match_id", tm.id).order("sort"));
+        const a = mp.filter((x) => x.team_id === T1.id);
+        const b = mp.filter((x) => x.team_id === T2.id);
+        await ok(tev(T, 1, { type: "toss", winner: T1.id, decision: "bat" }));
+        await ok(tev(T, 2, { type: "innings_start", batting_team: T1.id, bowling_team: T2.id, striker: a[0].id, non_striker: a[1].id, bowler: b[0].id }));
+        await ok(tev(T, 3, { type: "break", kind: "lunch" }));
+        await ok(tev(T, 4, { type: "stumps" }));
+        await ok(tev(T, 5, { type: "end_match" }));
+      });
+      await test("a Test can be drawn, saves every innings, and keeps stats per innings", async () => {
+        const mp = await ok(admin.from("match_players").select("*").eq("match_id", tm.id).order("sort"));
+        const a0 = mp.find((x) => x.team_id === T1.id);
+        const innings = [
+          { team: T1.id, runs: 120, wickets: 2, balls: 300, declared: false, follow_on: false },
+          { team: T2.id, runs: 90, wickets: 2, balls: 250, declared: false, follow_on: false },
+          { team: T1.id, runs: 60, wickets: 1, balls: 100, declared: true, follow_on: false },
+        ];
+        const result = { outcome: "draw", winner_team_id: null, batting_first: "a", a_runs: 180, a_wickets: 1, a_balls: 400, b_runs: 90, b_wickets: 2, b_balls: 250, result_text: "Match drawn", innings };
+        const stats = [
+          { match_player_id: a0.id, innings: 1, team_id: T1.id, did_bat: true, bat_runs: 70, bat_balls: 120, out: true },
+          { match_player_id: a0.id, innings: 2, team_id: T1.id, did_bat: true, bat_runs: 40, bat_balls: 60, out: false },
+        ];
+        await fails(rpc(db, "scorer_finish", { ...L, p_result: { ...result, innings: null }, p_changes: [], p_stats: [] }), /only a test/i);
+        await ok(rpc(db, "scorer_finish", { ...T, p_result: result, p_changes: [], p_stats: stats }));
+        const m = await ok(anon.from("matches").select("*").eq("id", tm.id).single());
+        assert(m.outcome === "draw" && m.status === "completed" && m.innings.length === 3 && m.innings[2].declared, JSON.stringify(m));
+        const rows = await ok(anon.from("player_match_stats").select("*").eq("match_id", tm.id).order("innings"));
+        assert(rows.length === 2 && rows[0].bat_runs === 70 && rows[1].innings === 2 && rows[1].bat_runs === 40, JSON.stringify(rows));
+      });
+      if (up) {
+        for (const page of [`/match/${tm.id}`, `/fixtures/${t7.id}`, `/t/${t7.id}/fixtures`, `/squads/${t7.id}`]) {
+          await test(`page ${page.replace(tm.id, ":id").replace(t7.id, ":id")} loads`, async () => {
+            const res = await fetch(`${APP}${page}`);
+            assert(res.status === 200, `status ${res.status}`);
+          });
+        }
+      }
+    }
   } finally {
     console.log("\nCleaning up test data...");
+    if (t7) await admin.from("tournaments").delete().eq("id", t7.id);
     if (t6) await admin.from("tournaments").delete().eq("id", t6.id);
     if (t5) await admin.from("tournaments").delete().eq("id", t5.id);
     if (t4) await admin.from("tournaments").delete().eq("id", t4.id);

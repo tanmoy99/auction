@@ -5,17 +5,20 @@ import Link from "next/link";
 import { CalendarDays, KeyRound, MapPin, Pencil, Radio, Trophy } from "lucide-react";
 import {
   DEFAULT_SETTINGS,
+  TEST_POINTS,
   ballsToOvers,
   champion,
+  isTest,
   playoffTeams,
   sourceLabel,
   standings,
+  testStandings,
   type FixtureSettings,
   type Match,
   type StandingRow,
 } from "@/lib/fixtures";
 import { useTournamentStats } from "@/lib/hooks";
-import { ballsText as oversText } from "@/lib/scoring";
+import { BREAKS, ballsText as oversText, testScoreText, type LiveScore } from "@/lib/scoring";
 import type { Team } from "@/lib/types";
 import { StatsView } from "./stats";
 import { Button, Card, EmptyState, TeamDot, cn } from "./ui";
@@ -57,6 +60,22 @@ function score(runs: number | null, wickets: number | null, balls: number | null
   return `${runs}${wickets != null && wickets < allOut ? `/${wickets}` : ""}${balls != null ? ` (${ballsToOvers(balls)})` : ""}`;
 }
 
+// One line for a Test in progress: "Stumps, Day 2 · MI lead by 120"
+function testLiveText(live: LiveScore, teams: Map<string, Team>) {
+  const t = live.test!;
+  const side = teams.get(live.team)?.short_name || teams.get(live.team)?.name;
+  const pause = t.stumps ? `Stumps, day ${t.day - 1}` : t.on_break ? BREAKS.find((b) => b.key === t.on_break)?.label : `Day ${t.day}`;
+  const state =
+    live.target != null
+      ? `${side} need ${Math.max(live.target - live.runs, 0)} to win`
+      : live.innings === 1
+        ? `${side} batting`
+        : t.lead >= 0
+          ? `${side} lead by ${t.lead}`
+          : `${side} trail by ${-t.lead}`;
+  return `${pause} · ${state}`;
+}
+
 export function MatchCard({
   match: m,
   teams,
@@ -82,13 +101,15 @@ export function MatchCard({
   ];
   const ready = !!m.team_a_id && !!m.team_b_id;
   const knockout = m.stage === "knockout";
+  const test = isTest(m);
 
   return (
     <Card className={cn("p-3", knockout && "border-amber-200")}>
       <div className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-500">
         <span className="min-w-0 truncate">
-          <span className="font-semibold text-slate-700">Match {m.match_no}</span>
-          {m.stage !== "league" && (
+          <span className="font-semibold text-slate-700">{test ? m.round_name : `Match ${m.match_no}`}</span>
+          {test && <span className="ml-1.5 rounded bg-violet-50 px-1.5 py-0.5 font-medium text-violet-700">{m.days}-day Test</span>}
+          {!test && m.stage !== "league" && (
             <span className={cn("ml-1.5 rounded px-1.5 py-0.5 font-medium", knockout ? "bg-amber-100 text-amber-800" : "bg-sky-50 text-sky-700")}>
               {m.round_name}
             </span>
@@ -110,8 +131,9 @@ export function MatchCard({
           const team = side.id ? teams.get(side.id) : undefined;
           const won = done && m.winner_team_id && m.winner_team_id === side.id;
           const lost = done && m.winner_team_id && m.winner_team_id !== side.id;
-          const text =
-            live && live.team === side.id
+          const text = test
+            ? (testScoreText(live?.test?.scores ?? m.innings, side.id) ?? (done && side.runs != null ? String(side.runs) : null))
+            : live && live.team === side.id
               ? `${live.runs}/${live.wickets} (${oversText(live.balls)})`
               : score(side.runs, side.wickets, side.balls, settings.wickets);
           return (
@@ -131,9 +153,11 @@ export function MatchCard({
           {done
             ? m.result_text
             : live
-              ? live.target
-                ? `Need ${Math.max(live.target - live.runs, 0)} from ${live.overs * 6 - live.balls} balls`
-                : "1st innings in progress"
+              ? live.test
+                ? testLiveText(live, teams)
+                : live.target
+                  ? `Need ${Math.max(live.target - live.runs, 0)} from ${live.overs * 6 - live.balls} balls`
+                  : "1st innings in progress"
               : m.status === "live"
                 ? "Toss done, starting soon"
                 : ready
@@ -254,6 +278,108 @@ export function PointsTable({
   );
 }
 
+// Test table: World Test Championship points, ranked by the share of points won
+export function TestTable({ matches, teams }: { matches: Match[]; teams: Map<string, Team> }) {
+  const rows = testStandings(matches);
+  if (!rows.length) return null;
+  return (
+    <Card className="overflow-hidden">
+      <h3 className="border-b border-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-900">Test table</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs text-slate-500">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">#</th>
+              <th className="px-2 py-2 text-left font-medium">Team</th>
+              <th className="px-2 py-2 text-center font-medium">P</th>
+              <th className="px-2 py-2 text-center font-medium">W</th>
+              <th className="px-2 py-2 text-center font-medium">L</th>
+              <th className="px-2 py-2 text-center font-medium">D</th>
+              <th className="hidden px-2 py-2 text-center font-medium sm:table-cell">T</th>
+              <th className="px-2 py-2 text-center font-semibold text-slate-700">Pts</th>
+              <th className="px-3 py-2 text-right font-medium">PCT</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((r, i) => {
+              const team = teams.get(r.team_id);
+              return (
+                <tr key={r.team_id}>
+                  <td className="px-3 py-2 tabular-nums text-slate-400">{i + 1}</td>
+                  <td className="px-2 py-2">
+                    <span className="flex items-center gap-2 font-medium text-slate-800">
+                      <TeamDot color={team?.color ?? "#cbd5e1"} className="size-2.5 shrink-0" />
+                      <span className="max-w-40 truncate">{team?.name ?? "Team"}</span>
+                    </span>
+                  </td>
+                  <td className="px-2 py-2 text-center tabular-nums">{r.played}</td>
+                  <td className="px-2 py-2 text-center tabular-nums">{r.won}</td>
+                  <td className="px-2 py-2 text-center tabular-nums">{r.lost}</td>
+                  <td className="px-2 py-2 text-center tabular-nums">{r.drawn}</td>
+                  <td className="hidden px-2 py-2 text-center tabular-nums sm:table-cell">{r.tied}</td>
+                  <td className="px-2 py-2 text-center font-bold tabular-nums text-slate-900">{r.points}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.pct.toFixed(1)}%</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-500">
+        Win {TEST_POINTS.win}, tie {TEST_POINTS.tie}, draw {TEST_POINTS.draw} points. Ranked by PCT, the share of points won.
+      </p>
+    </Card>
+  );
+}
+
+// Matches grouped by day
+export function MatchDays({
+  matches,
+  teams,
+  byNo,
+  settings,
+  onResult,
+  onEdit,
+  onScorer,
+}: {
+  matches: Match[];
+  teams: Map<string, Team>;
+  byNo: Map<number, Match>;
+  settings: FixtureSettings;
+  onResult?: (m: Match) => void;
+  onEdit?: (m: Match) => void;
+  onScorer?: (m: Match) => void;
+}) {
+  const days: { day: string; list: Match[] }[] = [];
+  for (const m of matches) {
+    const day = matchDay(m.scheduled_at);
+    if (days.at(-1)?.day === day) days.at(-1)!.list.push(m);
+    else days.push({ day, list: [m] });
+  }
+  if (!days.length) return <p className="py-8 text-center text-sm text-slate-400">No matches here</p>;
+  return (
+    <>
+      {days.map(({ day, list }) => (
+        <section key={day + list[0]!.match_no}>
+          <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+            <CalendarDays className="size-4 text-slate-400" /> {day}
+            {list[0]!.venue && (
+              <span className="flex items-center gap-1 font-normal text-slate-400">
+                · <MapPin className="size-3.5" /> {list[0]!.venue}
+              </span>
+            )}
+          </h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {list.map((m) => (
+              <MatchCard key={m.id} match={m} teams={teams} byNo={byNo} settings={settings} onResult={onResult} onEdit={onEdit} onScorer={onScorer} />
+            ))}
+          </div>
+        </section>
+      ))}
+    </>
+  );
+}
+
 // Knockout rounds side by side, earliest on the left
 export function Bracket({ matches, teams, byNo, settings }: { matches: Match[]; teams: Map<string, Team>; byNo: Map<number, Match>; settings: FixtureSettings }) {
   const rounds = useMemo(() => {
@@ -281,11 +407,11 @@ export function Bracket({ matches, teams, byNo, settings }: { matches: Match[]; 
   );
 }
 
-type View = "matches" | "table" | "knockout" | "stats";
+type View = "matches" | "table" | "knockout" | "tests" | "stats";
 
 // Matches by day, points table(s) and bracket, with a champion banner at the end
 export function FixturesView({
-  matches,
+  matches: all,
   teams: teamList,
   settings: saved,
   onResult,
@@ -299,11 +425,15 @@ export function FixturesView({
   onEdit?: (m: Match) => void;
   onScorer?: (m: Match) => void;
 }) {
-  const statRows = useTournamentStats(matches[0]?.tournament_id);
+  const statRows = useTournamentStats(all[0]?.tournament_id);
   const settings = saved ?? DEFAULT_SETTINGS;
+  // one-day fixtures and Test matches are shown apart
+  const matches = useMemo(() => all.filter((m) => !isTest(m)), [all]);
+  const tests = useMemo(() => all.filter(isTest), [all]);
   const hasTable = matches.some((m) => m.stage !== "knockout");
   const hasKnockout = matches.some((m) => m.stage === "knockout");
-  const [view, setView] = useState<View>("matches");
+  const [picked, setView] = useState<View | null>(null);
+  const view: View = picked ?? (matches.length || !tests.length ? "matches" : "tests");
   const [filter, setFilter] = useState<"all" | "upcoming" | "results">("all");
 
   const teams = useMemo(() => new Map(teamList.map((t) => [t.id, t])), [teamList]);
@@ -311,20 +441,16 @@ export function FixturesView({
   const tables = useMemo(() => standings(matches, settings), [matches, settings]);
   const winner = champion(matches, settings);
   const done = matches.filter((m) => m.status === "completed").length;
+  const testsDone = tests.filter((m) => m.status === "completed").length;
 
-  const shown = matches.filter((m) => (filter === "upcoming" ? m.status !== "completed" : filter === "results" ? m.status === "completed" : true));
-  const days: { day: string; list: Match[] }[] = [];
-  for (const m of shown) {
-    const day = matchDay(m.scheduled_at);
-    if (days.at(-1)?.day === day) days.at(-1)!.list.push(m);
-    else days.push({ day, list: [m] });
-  }
+  const keep = (m: Match) => (filter === "upcoming" ? m.status !== "completed" : filter === "results" ? m.status === "completed" : true);
 
   const qualify = settings.format === "groups" ? settings.qualify : settings.format === "league" ? playoffTeams(settings.playoff) : 0;
   const views: { key: View; label: string }[] = [
-    { key: "matches", label: `Matches (${done}/${matches.length})` },
+    ...(matches.length || !tests.length ? [{ key: "matches" as const, label: `Matches (${done}/${matches.length})` }] : []),
     ...(hasTable ? [{ key: "table" as const, label: "Points table" }] : []),
     ...(hasKnockout ? [{ key: "knockout" as const, label: "Knockouts" }] : []),
+    ...(tests.length ? [{ key: "tests" as const, label: `Tests (${testsDone}/${tests.length})` }] : []),
     { key: "stats" as const, label: "Stats" },
   ];
 
@@ -352,7 +478,7 @@ export function FixturesView({
             </button>
           ))}
         </nav>
-        {view === "matches" && (
+        {(view === "matches" || view === "tests") && (
           <nav className="ml-auto flex gap-1 text-xs">
             {(["all", "upcoming", "results"] as const).map((f) => (
               <button
@@ -367,28 +493,16 @@ export function FixturesView({
         )}
       </div>
 
-      {view === "matches" &&
-        (days.length === 0 ? (
-          <p className="py-8 text-center text-sm text-slate-400">No matches here</p>
-        ) : (
-          days.map(({ day, list }) => (
-            <section key={day + list[0]!.match_no}>
-              <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-700">
-                <CalendarDays className="size-4 text-slate-400" /> {day}
-                {list[0]!.venue && (
-                  <span className="flex items-center gap-1 font-normal text-slate-400">
-                    · <MapPin className="size-3.5" /> {list[0]!.venue}
-                  </span>
-                )}
-              </h3>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {list.map((m) => (
-                  <MatchCard key={m.id} match={m} teams={teams} byNo={byNo} settings={settings} onResult={onResult} onEdit={onEdit} onScorer={onScorer} />
-                ))}
-              </div>
-            </section>
-          ))
-        ))}
+      {view === "matches" && (
+        <MatchDays matches={matches.filter(keep)} teams={teams} byNo={byNo} settings={settings} onResult={onResult} onEdit={onEdit} onScorer={onScorer} />
+      )}
+
+      {view === "tests" && (
+        <div className="space-y-4">
+          <TestTable matches={tests} teams={teams} />
+          <MatchDays matches={tests.filter(keep)} teams={teams} byNo={byNo} settings={settings} onResult={onResult} onEdit={onEdit} onScorer={onScorer} />
+        </div>
+      )}
 
       {view === "table" && (
         <div className="space-y-4">

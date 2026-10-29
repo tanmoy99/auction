@@ -67,8 +67,18 @@ export type Player = {
   team_id: string | null;
   sold_price: number | null;
   source: string;
+  // set by the team owner (or organiser) for squad players; missing before migration 010
+  is_captain?: boolean;
+  is_vice_captain?: boolean;
+  is_keeper?: boolean;
   created_at: string;
 };
+
+// Captain first, then vice-captain, then keeper
+export function squadOrder(a: Pick<Player, "is_captain" | "is_vice_captain" | "is_keeper">, b: Pick<Player, "is_captain" | "is_vice_captain" | "is_keeper">) {
+  const rank = (p: typeof a) => (p.is_captain ? 0 : p.is_vice_captain ? 1 : p.is_keeper ? 2 : 3);
+  return rank(a) - rank(b);
+}
 
 export type AuctionState = {
   tournament_id: string;

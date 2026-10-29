@@ -1,32 +1,98 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { Match } from "@/lib/fixtures";
 import type { MatchPlayer } from "@/lib/hooks";
-import { ballsText, defaultRules, replay, runRate, type BallMark, type InningsState, type Lineups, type MatchEvent, type MatchState } from "@/lib/scoring";
+import {
+  BREAKS,
+  ballsText,
+  leadOf,
+  matchRules,
+  replay,
+  runRate,
+  type BallMark,
+  type InningsState,
+  type Lineups,
+  type MatchEvent,
+  type MatchState,
+  type ScoringRules,
+} from "@/lib/scoring";
 import type { Team, Tournament } from "@/lib/types";
 import { Card, TeamDot, cn } from "./ui";
 
 export type Scoreboard = {
   state: MatchState;
-  rules: ReturnType<typeof defaultRules>;
+  rules: ScoringRules;
   lineups: Lineups;
   name: (id: string | null | undefined) => string;
+  label: (id: string | null | undefined) => string; // name with (c) for the captain and † for the keeper
   team: (id: string | null | undefined) => Team | undefined;
 };
 
 // Everything a screen needs from the raw rows: rules, playing XIs and the replayed state
-export function useScoreboard(tournament: Tournament | null, teams: Team[], players: MatchPlayer[], events: MatchEvent[]): Scoreboard {
+export function useScoreboard(
+  tournament: Tournament | null,
+  teams: Team[],
+  players: MatchPlayer[],
+  events: MatchEvent[],
+  match?: Pick<Match, "match_type" | "days"> | null,
+): Scoreboard {
+  const matchType = match?.match_type;
+  const days = match?.days;
   return useMemo(() => {
-    const rules = defaultRules(tournament?.fixture_settings);
+    const rules = matchRules(tournament?.fixture_settings, { match_type: matchType, days });
     const lineups: Lineups = {};
     for (const p of players) (lineups[p.team_id] ??= []).push(p.id);
-    const names = new Map(players.map((p) => [p.id, p.name]));
-    const name = (id: string | null | undefined) => (id ? (names.get(id) ?? "Player") : "");
+    const byId = new Map(players.map((p) => [p.id, p]));
+    const name = (id: string | null | undefined) => (id ? (byId.get(id)?.name ?? "Player") : "");
+    const label = (id: string | null | undefined) => {
+      const p = id ? byId.get(id) : undefined;
+      if (!p) return name(id);
+      return `${p.name}${p.is_captain ? " (c)" : ""}${p.is_keeper ? " †" : ""}`;
+    };
     const teamMap = new Map(teams.map((t) => [t.id, t]));
     const team = (id: string | null | undefined) => (id ? teamMap.get(id) : undefined);
     const state = replay(events, rules, lineups, name);
-    return { state, rules, lineups, name, team };
-  }, [tournament, teams, players, events]);
+    return { state, rules, lineups, name, label, team };
+  }, [tournament, teams, players, events, matchType, days]);
+}
+
+const ORDINAL = ["1st", "2nd", "3rd", "4th"];
+
+// Between innings: the target (limited overs), or who leads and by how much (Tests)
+export function breakText(board: Scoreboard) {
+  const { state, team } = board;
+  const done = state.current;
+  if (!done) return "";
+  if (board.rules.format !== "test") return `${team(done.bowling_team)?.name} need ${state.target} to win`;
+  const lead = leadOf(state);
+  const side = team(done.batting_team)?.name;
+  return lead > 0 ? `${side} lead by ${lead}` : lead < 0 ? `${side} trail by ${-lead}` : "Scores level";
+}
+
+// Tests: "Day 2 · Lunch", "Stumps, Day 1", lead / trail
+export function TestStatus({ board, dark }: { board: Scoreboard; dark?: boolean }) {
+  const { state, team } = board;
+  const inn = state.current;
+  if (board.rules.format !== "test" || !inn) return null;
+  const lead = leadOf(state);
+  const side = team(inn.batting_team)?.short_name || team(inn.batting_team)?.name;
+  const pause = state.stumps ? `Stumps · Day ${state.day - 1}` : state.on_break ? BREAKS.find((b) => b.key === state.on_break)?.label : null;
+  const leadText =
+    inn.number === 1 ? null : state.target != null ? null : lead > 0 ? `${side} lead by ${lead}` : lead < 0 ? `${side} trail by ${-lead}` : "Scores level";
+  const oversLeft = board.rules.overs_per_day ? Math.max(board.rules.overs_per_day - Math.floor(state.day_balls / 6), 0) : null;
+  return (
+    <div className={cn("flex flex-wrap items-center gap-2 text-xs font-semibold", dark ? "text-white/80" : "text-slate-600")}>
+      <span className={cn("rounded px-2 py-0.5", dark ? "bg-white/10" : "bg-slate-100")}>
+        Day {state.stumps ? state.day - 1 : state.day} of {board.rules.days}
+      </span>
+      <span>{ORDINAL[inn.number - 1]} innings</span>
+      {inn.follow_on && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">Follow-on</span>}
+      {leadText && <span>· {leadText}</span>}
+      {pause && <span className="rounded bg-sky-600 px-2 py-0.5 text-white">{pause}</span>}
+      {!pause && oversLeft != null && !state.stumps && <span className={dark ? "text-white/50" : "text-slate-400"}>· {oversLeft} overs left today</span>}
+    </div>
+  );
 }
 
 export function OverMarks({ marks, dark, size = "md" }: { marks: BallMark[]; dark?: boolean; size?: "md" | "lg" }) {
@@ -55,12 +121,14 @@ export function OverMarks({ marks, dark, size = "md" }: { marks: BallMark[]; dar
 
 // Big score line plus batters at the crease and the current bowler
 export function LiveSummary({ board, dark }: { board: Scoreboard; dark?: boolean }) {
-  const { state, rules, name, team } = board;
+  const { state, rules, label: name, team, lineups } = board;
   const inn = state.current;
   if (!inn) return null;
   const batting = team(inn.batting_team);
-  const chase = inn.number === 2 && state.target != null;
+  const test = rules.format === "test";
+  const chase = inn.number === rules.innings_per_side * 2 && state.target != null;
   const ballsLeft = rules.overs * 6 - inn.legal_balls;
+  const wicketsLeft = Math.max(Math.min(rules.wickets, (lineups[inn.batting_team]?.length ?? 11) - 1) - inn.wickets, 0);
   const need = chase ? state.target! - inn.runs : 0;
   const line = (id: string | null) => inn.batters.find((b) => b.id === id);
   const bowler = inn.bowler ? inn.bowlers.find((b) => b.id === inn.bowler) : inn.bowlers.find((b) => b.id === inn.last_over_bowler);
@@ -69,6 +137,7 @@ export function LiveSummary({ board, dark }: { board: Scoreboard; dark?: boolean
 
   return (
     <div className="space-y-3">
+      <TestStatus board={board} dark={dark} />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className={cn("flex items-center gap-2 text-sm font-semibold", dark ? "text-white/80" : "text-slate-700")}>
@@ -78,13 +147,14 @@ export function LiveSummary({ board, dark }: { board: Scoreboard; dark?: boolean
           <p className="text-4xl font-black tabular-nums">
             {inn.runs}/{inn.wickets}
             <span className={cn("ml-2 text-lg font-semibold", muted)}>
-              ({ballsText(inn.legal_balls)}/{rules.overs})
+              ({ballsText(inn.legal_balls)}
+              {rules.overs ? `/${rules.overs}` : " ov"})
             </span>
           </p>
         </div>
         <div className={cn("text-right text-sm tabular-nums", muted)}>
           <p>CRR {runRate(inn.runs, inn.legal_balls).toFixed(2)}</p>
-          {chase && !inn.complete && ballsLeft > 0 && <p>Need RR {runRate(need, ballsLeft).toFixed(2)}</p>}
+          {chase && !test && !inn.complete && ballsLeft > 0 && <p>Need RR {runRate(need, ballsLeft).toFixed(2)}</p>}
           {inn.partnership.balls > 0 && (
             <p>
               Partnership {inn.partnership.runs} ({inn.partnership.balls})
@@ -94,7 +164,12 @@ export function LiveSummary({ board, dark }: { board: Scoreboard; dark?: boolean
       </div>
       {chase && !inn.complete && (
         <p className={cn("rounded-lg px-3 py-2 text-sm font-semibold", dark ? "bg-white/10" : "bg-emerald-50 text-emerald-800")}>
-          {need > 0 ? `Need ${need} run${need === 1 ? "" : "s"} from ${ballsLeft} ball${ballsLeft === 1 ? "" : "s"}` : "Scores level"} · Target {state.target}
+          {need <= 0
+            ? "Scores level"
+            : test
+              ? `Need ${need} run${need === 1 ? "" : "s"} · ${wicketsLeft} wicket${wicketsLeft === 1 ? "" : "s"} left`
+              : `Need ${need} run${need === 1 ? "" : "s"} from ${ballsLeft} ball${ballsLeft === 1 ? "" : "s"}`}{" "}
+          · Target {state.target}
         </p>
       )}
       {!inn.complete && (
@@ -127,7 +202,8 @@ export function LiveSummary({ board, dark }: { board: Scoreboard; dark?: boolean
 }
 
 function InningsCard({ inn, board, xi }: { inn: InningsState; board: Scoreboard; xi: string[] }) {
-  const { name, team } = board;
+  const { label: name, team } = board;
+  const test = board.rules.format === "test";
   const batted = new Set(inn.batters.map((b) => b.id));
   const yetToBat = xi.filter((id) => !batted.has(id));
   const extras = inn.extras.wd + inn.extras.nb + inn.extras.b + inn.extras.lb;
@@ -174,7 +250,9 @@ function InningsCard({ inn, board, xi }: { inn: InningsState; board: Scoreboard;
           <span className="font-medium text-slate-800">Extras {extras}</span> (wd {inn.extras.wd}, nb {inn.extras.nb}, b {inn.extras.b}, lb {inn.extras.lb})
         </p>
         <p className="font-semibold text-slate-900">
-          Total {inn.runs}/{inn.wickets} ({ballsText(inn.legal_balls)} ov) · RR {runRate(inn.runs, inn.legal_balls).toFixed(2)}
+          Total {inn.runs}/{inn.wickets}
+          {inn.end_reason === "declared" && test ? " declared" : ""} ({ballsText(inn.legal_balls)} ov) · RR {runRate(inn.runs, inn.legal_balls).toFixed(2)}
+          {inn.follow_on && " · following on"}
         </p>
         {yetToBat.length > 0 && (
           <p>
@@ -256,6 +334,8 @@ export function FullScorecard({ board }: { board: Scoreboard }) {
               className={cn("flex-1 px-3 py-3 text-sm font-medium", shown === i ? "border-b-2 border-emerald-600 text-emerald-700" : "text-slate-500")}
             >
               {t?.short_name || t?.name} {x.runs}/{x.wickets}
+              {x.end_reason === "declared" && board.rules.format === "test" ? "d" : ""}
+              {board.rules.format === "test" && <span className="block text-[11px] font-normal text-slate-400">{ORDINAL[i]} inns</span>}
             </button>
           );
         })}

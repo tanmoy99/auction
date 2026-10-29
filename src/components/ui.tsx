@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { imageUrl, initials } from "@/lib/format";
-import type { PlayerStatus } from "@/lib/types";
+import type { Player, PlayerStatus } from "@/lib/types";
 
 export function cn(...classes: (string | false | null | undefined)[]) {
   return classes.filter(Boolean).join(" ");
@@ -190,5 +190,24 @@ export function Modal({
         <div className="p-5">{children}</div>
       </div>
     </div>
+  );
+}
+
+// C / VC / WK marks next to a squad player's name
+export function RoleBadges({ player, className }: { player: Pick<Player, "is_captain" | "is_vice_captain" | "is_keeper">; className?: string }) {
+  const tags = [
+    player.is_captain && { key: "C", title: "Captain", cls: "bg-amber-400 text-amber-950" },
+    player.is_vice_captain && { key: "VC", title: "Vice-captain", cls: "bg-amber-100 text-amber-800" },
+    player.is_keeper && { key: "WK", title: "Wicket-keeper", cls: "bg-sky-100 text-sky-800" },
+  ].filter(Boolean) as { key: string; title: string; cls: string }[];
+  if (!tags.length) return null;
+  return (
+    <span className={cn("inline-flex shrink-0 gap-1", className)}>
+      {tags.map((t) => (
+        <span key={t.key} title={t.title} className={cn("rounded px-1 text-[10px] font-bold leading-4", t.cls)}>
+          {t.key}
+        </span>
+      ))}
+    </span>
   );
 }

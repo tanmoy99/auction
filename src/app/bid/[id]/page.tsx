@@ -7,10 +7,11 @@ import { CalendarDays, Gavel, Lightbulb, LogOut, Trophy, UserPlus, Wifi, WifiOff
 import { BidHistory, PlayerStage } from "@/components/auction";
 import { PlayerBoard, UpNext } from "@/components/player-board";
 import { toast } from "@/components/toast";
-import { Avatar, Card, EmptyState, PageLoader, TeamDot, cn } from "@/components/ui";
+import { Avatar, Card, EmptyState, PageLoader, RoleBadges, TeamDot, cn } from "@/components/ui";
 import { bidStep, errorMessage, maxBid, nextBid, rupees } from "@/lib/format";
 import { useAuctionDriver, useCountdown, useServerOffset, useTournamentLive, useUser } from "@/lib/hooks";
 import { supabase } from "@/lib/supabase";
+import { squadOrder } from "@/lib/types";
 
 export default function BidPage() {
   const { id } = useParams<{ id: string }>();
@@ -30,7 +31,7 @@ export default function BidPage() {
   const current = players.find((p) => p.id === state?.player_id) ?? null;
   const bidding = state?.phase === "bidding" && !!current;
   const left = useCountdown(bidding ? state!.ends_at : null, offset);
-  const mySquad = useMemo(() => players.filter((p) => p.team_id === myTeam?.id && p.status === "sold"), [players, myTeam]);
+  const mySquad = useMemo(() => players.filter((p) => p.team_id === myTeam?.id && p.status === "sold").sort(squadOrder), [players, myTeam]);
   const leading = !!myTeam && state?.leading_team_id === myTeam.id;
 
   // Buzz the phone when someone outbids us
@@ -175,7 +176,10 @@ export default function BidPage() {
                 {mySquad.map((p) => (
                   <li key={p.id} className="flex items-center gap-3 px-2 py-2">
                     <Avatar name={p.name} src={p.photo_url} size={32} />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">{p.name}</span>
+                    <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-slate-800">
+                      <span className="truncate">{p.name}</span>
+                      <RoleBadges player={p} />
+                    </span>
                     <span className="text-xs text-slate-500">{p.role}</span>
                     <span className="text-sm font-semibold tabular-nums text-slate-900">{rupees(p.sold_price)}</span>
                   </li>

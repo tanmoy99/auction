@@ -3,9 +3,10 @@
 import { useParams } from "next/navigation";
 import { Download } from "lucide-react";
 import { Logo } from "@/components/app-header";
-import { Avatar, Button, Card, PageLoader } from "@/components/ui";
+import { Avatar, Button, Card, PageLoader, RoleBadges } from "@/components/ui";
 import { rupees } from "@/lib/format";
 import { useTournamentLive } from "@/lib/hooks";
+import { squadOrder } from "@/lib/types";
 
 // Public page: every team's squad, updates live during the auction
 export default function SquadsPage() {
@@ -21,7 +22,14 @@ export default function SquadsPage() {
     const rows = teams.flatMap((team) =>
       players
         .filter((p) => p.team_id === team.id && p.status === "sold")
-        .map((p) => ({ Team: team.name, Player: p.name, Role: p.role ?? "", City: p.city ?? "", Price: p.sold_price ?? 0 })),
+        .map((p) => ({
+          Team: team.name,
+          Player: p.name,
+          Role: p.role ?? "",
+          "C / VC / WK": [p.is_captain && "C", p.is_vice_captain && "VC", p.is_keeper && "WK"].filter(Boolean).join(" "),
+          City: p.city ?? "",
+          Price: p.sold_price ?? 0,
+        })),
     );
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Squads");
     XLSX.utils.book_append_sheet(
@@ -53,7 +61,9 @@ export default function SquadsPage() {
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {teams.map((team) => {
-          const squad = players.filter((p) => p.team_id === team.id && p.status === "sold").sort((a, b) => (b.sold_price ?? 0) - (a.sold_price ?? 0));
+          const squad = players
+            .filter((p) => p.team_id === team.id && p.status === "sold")
+            .sort((a, b) => squadOrder(a, b) || (b.sold_price ?? 0) - (a.sold_price ?? 0));
           return (
             <Card key={team.id} className="overflow-hidden">
               <div className="flex items-center gap-3 px-4 py-3 text-white" style={{ background: team.color }}>
@@ -71,7 +81,10 @@ export default function SquadsPage() {
                   <li key={p.id} className="flex items-center gap-3 px-4 py-2">
                     <Avatar name={p.name} src={p.photo_url} size={30} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-slate-800">{p.name}</p>
+                      <p className="flex items-center gap-1.5 text-sm font-medium text-slate-800">
+                        <span className="truncate">{p.name}</span>
+                        <RoleBadges player={p} />
+                      </p>
                       <p className="truncate text-xs text-slate-500">{p.role}</p>
                     </div>
                     <span className="text-sm font-semibold tabular-nums text-slate-900">{rupees(p.sold_price)}</span>

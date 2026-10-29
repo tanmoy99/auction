@@ -2,7 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { Maximize } from "lucide-react";
-import { OverMarks, useScoreboard } from "@/components/scorecard";
+import { OverMarks, TestStatus, breakText, useScoreboard } from "@/components/scorecard";
 import { Spinner, TeamDot } from "@/components/ui";
 import { useMatchLive } from "@/lib/hooks";
 import { ballsText, runRate } from "@/lib/scoring";
@@ -11,7 +11,7 @@ import { ballsText, runRate } from "@/lib/scoring";
 export default function MatchScreen() {
   const { id } = useParams<{ id: string }>();
   const live = useMatchLive(id);
-  const board = useScoreboard(live.tournament, live.teams, live.players, live.events);
+  const board = useScoreboard(live.tournament, live.teams, live.players, live.events, live.match);
 
   if (live.loading)
     return (
@@ -22,11 +22,12 @@ export default function MatchScreen() {
   const m = live.match;
   if (!m) return <div className="flex min-h-screen flex-1 items-center justify-center bg-slate-950 text-white/60">Match not found</div>;
 
-  const { state, rules, name, team } = board;
+  const { state, rules, label: name, team } = board;
+  const test = rules.format === "test";
   const inn = state.current;
   const batting = team(inn?.batting_team);
   const bowlingTeam = team(inn?.bowling_team);
-  const chase = inn?.number === 2 && state.target != null;
+  const chase = inn?.number === rules.innings_per_side * 2 && state.target != null;
   const ballsLeft = inn ? rules.overs * 6 - inn.legal_balls : 0;
   const need = chase && inn ? state.target! - inn.runs : 0;
   const thisOver = inn ? (inn.overs.at(-1)?.length ? inn.overs.at(-1)! : (inn.overs.at(-2) ?? [])) : [];
@@ -42,7 +43,7 @@ export default function MatchScreen() {
         <div>
           <p className="text-sm font-medium uppercase tracking-[0.2em] text-emerald-400">
             {live.tournament?.name} · Match {m.match_no}
-            {m.stage !== "league" && ` · ${m.round_name}`}
+            {(m.stage !== "league" || test) && ` · ${m.round_name}`}
           </p>
           <h1 className="text-2xl font-bold lg:text-3xl">
             {team(m.team_a_id)?.name} v {team(m.team_b_id)?.name}
@@ -79,6 +80,11 @@ export default function MatchScreen() {
           <>
             <div className="flex flex-wrap items-end justify-between gap-6">
               <div>
+                {test && (
+                  <div className="mb-2 text-xl">
+                    <TestStatus board={board} dark />
+                  </div>
+                )}
                 <p className="flex items-center gap-3 text-3xl font-bold">
                   <TeamDot color={batting?.color ?? "#94a3b8"} className="size-4" /> {batting?.name}
                   {inn.free_hit && <span className="rounded-lg bg-amber-400 px-3 py-1 text-xl font-black text-amber-950">FREE HIT</span>}
@@ -87,16 +93,17 @@ export default function MatchScreen() {
                   {inn.runs}/{inn.wickets}
                 </p>
                 <p className="text-3xl font-semibold text-white/60 tabular-nums">
-                  {ballsText(inn.legal_balls)} / {rules.overs} overs · CRR {runRate(inn.runs, inn.legal_balls).toFixed(2)}
+                  {ballsText(inn.legal_balls)}
+                  {rules.overs ? ` / ${rules.overs}` : ""} overs · CRR {runRate(inn.runs, inn.legal_balls).toFixed(2)}
                 </p>
               </div>
               {chase && !inn.complete && (
                 <div className="rounded-3xl bg-white/10 px-8 py-6 text-right ring-1 ring-white/15">
                   <p className="text-xl uppercase tracking-widest text-white/50">Target {state.target}</p>
                   <p className="text-5xl font-black">
-                    Need {Math.max(need, 0)} <span className="text-3xl font-semibold text-white/60">from {ballsLeft}</span>
+                    Need {Math.max(need, 0)} {!test && <span className="text-3xl font-semibold text-white/60">from {ballsLeft}</span>}
                   </p>
-                  <p className="text-xl text-white/60">Required RR {runRate(need, ballsLeft).toFixed(2)}</p>
+                  {!test && <p className="text-xl text-white/60">Required RR {runRate(need, ballsLeft).toFixed(2)}</p>}
                 </div>
               )}
             </div>
@@ -136,7 +143,7 @@ export default function MatchScreen() {
             )}
             {inn.complete && state.next === "innings_break" && (
               <p className="text-center text-4xl font-bold">
-                Innings break · {team(inn.bowling_team)?.name} need {state.target} to win
+                Innings break · {breakText(board)}
               </p>
             )}
           </>

@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { MonitorPlay, Trophy } from "lucide-react";
 import { Logo } from "@/components/app-header";
 import { matchDay, matchTime } from "@/components/fixtures";
-import { FullScorecard, LiveSummary, useScoreboard } from "@/components/scorecard";
+import { FullScorecard, LiveSummary, breakText, useScoreboard } from "@/components/scorecard";
 import { Button, Card, EmptyState, PageLoader, TeamDot } from "@/components/ui";
 import { useMatchLive } from "@/lib/hooks";
 
@@ -12,7 +12,7 @@ import { useMatchLive } from "@/lib/hooks";
 export default function MatchPage() {
   const { id } = useParams<{ id: string }>();
   const live = useMatchLive(id);
-  const board = useScoreboard(live.tournament, live.teams, live.players, live.events);
+  const board = useScoreboard(live.tournament, live.teams, live.players, live.events, live.match);
 
   if (live.loading) return <PageLoader />;
   if (!live.match || !live.tournament) return <EmptyState icon={<Trophy className="size-6" />} title="Match not found" />;
@@ -42,7 +42,8 @@ export default function MatchPage() {
       <div>
         <p className="text-sm text-slate-500">
           {live.tournament.name} · Match {m.match_no}
-          {m.stage !== "league" && ` · ${m.round_name}`}
+          {(m.stage !== "league" || m.match_type === "test") && ` · ${m.round_name}`}
+          {m.match_type === "test" && ` · ${m.days}-day Test`}
         </p>
         <h1 className="mt-1 flex flex-wrap items-center gap-x-2 text-2xl font-bold text-slate-900">
           <span className="flex items-center gap-2">
@@ -85,7 +86,7 @@ export default function MatchPage() {
       )}
       {state.next === "innings_break" && (
         <Card className="p-4 text-center text-sm font-medium text-slate-700">
-          Innings break · {board.team(state.innings[1]?.batting_team ?? state.innings[0]!.bowling_team)?.name} need {state.target} to win
+          Innings break · {breakText(board)}
         </Card>
       )}
 
