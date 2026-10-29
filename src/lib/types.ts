@@ -38,6 +38,8 @@ export type Team = {
   owner_login: string | null;
   purse: number;
   spent: number;
+  // may the owner add players themselves: owner asks once, organiser approves once
+  player_access: "none" | "requested" | "approved";
   created_at: string;
 };
 

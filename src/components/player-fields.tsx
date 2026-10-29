@@ -20,6 +20,20 @@ export const emptyPlayerForm: PlayerFormValues = {
   name: "", phone: "", role: "", batting_style: "", bowling_style: "", age: "", city: "", photo_url: "",
 };
 
+// Body for the /api/register and /api/join forms (field names match the import headers)
+export function playerFormData(values: PlayerFormValues, photo?: Blob | null) {
+  const body = new FormData();
+  body.set("Name", values.name);
+  body.set("Phone", values.phone);
+  body.set("Role", values.role);
+  body.set("Batting style", values.batting_style);
+  body.set("Bowling style", values.bowling_style);
+  body.set("Age", values.age);
+  body.set("City", values.city);
+  if (photo) body.set("photo", photo, "photo.jpg");
+  return body;
+}
+
 // Shared by the organiser's player form and the public registration page
 export function PlayerFields({
   values,

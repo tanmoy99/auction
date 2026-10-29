@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Copy, KeyRound, MessageCircle, Pencil, Plus, Trash2, Users } from "lucide-react";
+import { Copy, KeyRound, MessageCircle, Pencil, Plus, Trash2, UserPlus, Users } from "lucide-react";
 import { useTournament } from "@/components/tournament-context";
 import { toast } from "@/components/toast";
 import { Avatar, Button, Card, EmptyState, Field, Input, Modal, cn } from "@/components/ui";
@@ -101,6 +101,7 @@ export default function TeamsPage() {
                     <KeyRound className="size-4" />
                     {team.owner_user_id ? `Login: ${team.owner_login} · Reset password` : "Create owner login"}
                   </button>
+                  <PlayerAccess team={team} />
                 </div>
               </Card>
             );
@@ -110,6 +111,63 @@ export default function TeamsPage() {
 
       {editing !== undefined && <TeamModal team={editing} onClose={() => setEditing(undefined)} />}
       {loginFor && <OwnerLoginModal team={loginFor} onClose={() => setLoginFor(null)} />}
+    </div>
+  );
+}
+
+const ACCESS_MESSAGES: Record<Team["player_access"], string> = {
+  none: "Owner adding players turned off",
+  requested: "Request declined",
+  approved: "Owner can now add players",
+};
+
+// One-time permission for the owner to add their own players (and share a join link)
+function PlayerAccess({ team }: { team: Team }) {
+  const [busy, setBusy] = useState(false);
+
+  async function set(player_access: Team["player_access"]) {
+    setBusy(true);
+    const { error } = await supabase.from("teams").update({ player_access }).eq("id", team.id);
+    setBusy(false);
+    if (error) toast(errorMessage(error), "error");
+    else toast(player_access === "none" && team.player_access === "requested" ? ACCESS_MESSAGES.requested : ACCESS_MESSAGES[player_access], "success");
+  }
+
+  if (team.player_access === "requested")
+    return (
+      <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+        <p className="flex items-center gap-2 text-sm font-medium text-amber-900">
+          <UserPlus className="size-4" /> Owner asks to add their own players
+        </p>
+        <div className="mt-2 flex gap-2">
+          <Button size="sm" className="flex-1" loading={busy} onClick={() => set("approved")}>
+            Approve
+          </Button>
+          <Button size="sm" variant="secondary" className="flex-1" disabled={busy} onClick={() => set("none")}>
+            Decline
+          </Button>
+        </div>
+      </div>
+    );
+
+  return (
+    <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+      <span className={cn("flex items-center gap-2", team.player_access === "approved" ? "text-emerald-700" : "text-slate-500")}>
+        <UserPlus className="size-4" />
+        {team.player_access === "approved" ? "Owner can add players" : "Owner can't add players"}
+      </span>
+      <Button
+        size="sm"
+        variant="ghost"
+        loading={busy}
+        onClick={() =>
+          team.player_access === "approved"
+            ? confirm(`Stop ${team.name}'s owner adding players? Their join link stops working. Players already added stay.`) && set("none")
+            : set("approved")
+        }
+      >
+        {team.player_access === "approved" ? "Turn off" : "Allow"}
+      </Button>
     </div>
   );
 }

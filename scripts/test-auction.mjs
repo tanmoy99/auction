@@ -70,7 +70,7 @@ async function main() {
   const owners = {};
   for (const k of ["a", "b", "c", "d"]) owners[k] = await makeUser(`owner-${k}`, "owner");
 
-  let t, t2, t3, t4, teams, players;
+  let t, t2, t3, t4, t5, teams, players;
   const db = org.client;
   const rpc = (client, fn, args) => client.rpc(fn, args);
   const state = async () => ok(admin.from("auction_state").select("*").eq("tournament_id", t.id).single());
@@ -694,8 +694,148 @@ async function main() {
         });
       }
     }
+    console.log("\nTeam owners add players (needs migration 008)");
+    const has008 = !(await admin.from("teams").select("player_access").limit(1)).error;
+    if (!has008) {
+      console.log("  \x1b[33m- skipped: run supabase/migrations/008_team_players.sql in Supabase first\x1b[0m");
+    } else {
+      t5 = await ok(db.from("tournaments").insert({ name: `TEST5 ${RUN}`, base_price: 500, min_squad: 1, max_squad: 3 }).select().single());
+      const [J1, J2] = await ok(
+        db.from("teams").insert([
+          { tournament_id: t5.id, name: "Join One", purse: 10000, owner_user_id: owners.a.user.id },
+          { tournament_id: t5.id, name: "Join Two", purse: 10000, owner_user_id: owners.b.user.id },
+        ]).select(),
+      );
+      const ownerA = owners.a.client;
+      let link;
+
+      await test("owner cannot get a join link before the organiser allows it", () =>
+        fails(rpc(ownerA, "team_link", { p_team: J1.id }), /organiser/i));
+      await test("owner cannot approve their own team directly", async () => {
+        await ownerA.from("teams").update({ player_access: "approved" }).eq("id", J1.id);
+        assert((await team(J1.id)).player_access === "none", "owner changed player_access");
+      });
+      await test("owner cannot ask on behalf of another team", () =>
+        fails(rpc(owners.b.client, "request_player_access", { p_team: J1.id }), /not the owner/i));
+      await test("owner asks once; the request waits for the organiser", async () => {
+        await ok(rpc(ownerA, "request_player_access", { p_team: J1.id }));
+        assert((await team(J1.id)).player_access === "requested", "not requested");
+        await fails(rpc(ownerA, "team_link", { p_team: J1.id }), /organiser/i);
+      });
+      await test("organiser approves; owner then gets a stable join link", async () => {
+        await ok(db.from("teams").update({ player_access: "approved" }).eq("id", J1.id));
+        link = await ok(rpc(ownerA, "team_link", { p_team: J1.id }));
+        assert(link && link === (await ok(rpc(ownerA, "team_link", { p_team: J1.id }))), "link changed between calls");
+        // asking again after approval must not undo it
+        await ok(rpc(ownerA, "request_player_access", { p_team: J1.id }));
+        assert((await team(J1.id)).player_access === "approved", "request reset the approval");
+      });
+      await test("the public join page sees the team but never the token", async () => {
+        const info = await ok(rpc(anon, "team_link_info", { p_token: link }));
+        assert(info.team === "Join One" && info.open === true && info.full === false, JSON.stringify(info));
+        assert(!JSON.stringify(info).includes(link), "token leaked");
+        assert((await ok(rpc(anon, "team_link_info", { p_token: crypto.randomUUID() }))) === null, "unknown link returned data");
+      });
+      await test("join links are private (public, other owners, other organisers)", async () => {
+        for (const c of [anon, owners.b.client, other.client, ownerA]) {
+          const { data } = await c.from("team_links").select("*").eq("tournament_id", t5.id);
+          assert(!data?.length, "team_links readable");
+        }
+        await fails(rpc(owners.b.client, "team_link", { p_team: J1.id }), /organiser/i);
+        await fails(rpc(owners.b.client, "team_link", { p_team: J2.id }), /organiser/i);
+      });
+      await test("players can't be put into a team without the website", async () => {
+        const args = { p_token: link, p_player: { name: "x" }, p_phone: null, p_source: "team-link" };
+        await fails(rpc(anon, "add_team_player", args), /permission|not find|denied/i);
+        await fails(rpc(ownerA, "add_team_player", args), /permission|not find|denied/i);
+        await fails(ownerA.from("players").insert({ tournament_id: t5.id, name: "x", base_price: 500, status: "sold", team_id: J1.id }), /row-level security/i);
+      });
+
+      if (up) {
+        const join = (fd, headers = {}) => fetch(`${APP}/api/join/${link}`, { method: "POST", body: fd, headers });
+        const form = (name, phone) => {
+          const fd = new FormData();
+          fd.set("Name", name);
+          if (phone) fd.set("Phone", phone);
+          fd.set("Role", "Bowler");
+          return fd;
+        };
+        const ownerToken = (await ownerA.auth.getSession()).data.session.access_token;
+        await test("player fills the join link and goes straight into the squad at Rs 0", async () => {
+          const res = await join(form("Link Joiner", "+91 90000 11111"));
+          assert(res.ok, await res.text());
+          const p = await ok(admin.from("players").select("*").eq("tournament_id", t5.id).eq("name", "Link Joiner").single());
+          assert(p.status === "sold" && p.team_id === J1.id && p.sold_price === 0 && p.source === "team-link" && p.role === "Bowler", JSON.stringify(p));
+          assert((await team(J1.id)).spent === 0, "purse was charged");
+          const c = await ok(admin.from("player_contacts").select("phone").eq("player_id", p.id).single());
+          assert(c.phone === "+91 90000 11111", "phone not saved");
+        });
+        await test("join link needs a mobile number, and the same number can't join twice", async () => {
+          const a = await join(form("No Phone"));
+          assert(a.status === 400, `got ${a.status}`);
+          const b = await join(form("Again", "9000011111"));
+          assert(b.status === 400 && /already registered/i.test((await b.json()).error), `got ${b.status}`);
+        });
+        await test("signed-in owner can add a player without a phone", async () => {
+          const res = await join(form("Owner Pick"), { Authorization: `Bearer ${ownerToken}` });
+          assert(res.ok, await res.text());
+          const p = await ok(admin.from("players").select("*").eq("tournament_id", t5.id).eq("name", "Owner Pick").single());
+          assert(p.source === "team-owner" && p.team_id === J1.id, JSON.stringify(p));
+        });
+        await test("squad limit is enforced", async () => {
+          assert((await join(form("Third", "9000033333"))).ok, "third player rejected");
+          const info = await ok(rpc(anon, "team_link_info", { p_token: link }));
+          assert(info.full === true, "not marked full");
+          const res = await join(form("Fourth", "9000044444"));
+          assert(res.status === 400, `got ${res.status}`);
+          const n = await ok(admin.from("players").select("id").eq("team_id", J1.id));
+          assert(n.length === 3, `squad has ${n.length}`);
+        });
+        await test("owner removes only players their team added", async () => {
+          const third = await ok(admin.from("players").select("id").eq("tournament_id", t5.id).eq("name", "Third").single());
+          await fails(rpc(owners.b.client, "owner_remove_player", { p_player: third.id }), /not found/i);
+          await ok(rpc(ownerA, "owner_remove_player", { p_player: third.id }));
+          assert((await ok(admin.from("players").select("id").eq("id", third.id))).length === 0, "not removed");
+          const bought = await ok(
+            admin.from("players").insert({ tournament_id: t5.id, name: "Bought", base_price: 500, status: "sold", team_id: J1.id, sold_price: 700 }).select().single(),
+          );
+          await fails(rpc(ownerA, "owner_remove_player", { p_player: bought.id }), /organiser/i);
+        });
+        await test("a new link stops the old one", async () => {
+          const old = link;
+          link = await ok(rpc(ownerA, "team_link", { p_team: J1.id, p_new: true }));
+          assert(link !== old, "token not changed");
+          const res = await fetch(`${APP}/api/join/${old}`, { method: "POST", body: form("Old", "9000055555") });
+          assert(res.status === 404, `got ${res.status}`);
+        });
+        for (const page of [`/join/${link}`, `/bid/${t5.id}/squad`]) {
+          await test(`page ${page.replace(link, ":token").replace(t5.id, ":id")} loads`, async () => {
+            const res = await fetch(`${APP}${page}`);
+            assert(res.status === 200, `status ${res.status}`);
+          });
+        }
+      }
+
+      await test("organiser turning it off closes the link; added players stay", async () => {
+        const before = (await ok(admin.from("players").select("id").eq("team_id", J1.id))).length;
+        await ok(db.from("teams").update({ player_access: "none" }).eq("id", J1.id));
+        assert((await ok(rpc(anon, "team_link_info", { p_token: link }))) === null, "old link still works");
+        await fails(rpc(ownerA, "team_link", { p_team: J1.id }), /organiser/i);
+        const after = (await ok(admin.from("players").select("id").eq("team_id", J1.id))).length;
+        assert(before === after, `squad went from ${before} to ${after}`);
+        if (up) {
+          const res = await fetch(`${APP}/api/join/${link}`, { method: "POST", body: new FormData() });
+          assert(res.status === 404, `got ${res.status}`);
+        }
+      });
+      await test("another organiser cannot approve this tournament's teams", async () => {
+        await other.client.from("teams").update({ player_access: "approved" }).eq("id", J2.id);
+        assert((await team(J2.id)).player_access === "none", "other organiser approved");
+      });
+    }
   } finally {
     console.log("\nCleaning up test data...");
+    if (t5) await admin.from("tournaments").delete().eq("id", t5.id);
     if (t4) await admin.from("tournaments").delete().eq("id", t4.id);
     if (t3) await admin.from("tournaments").delete().eq("id", t3.id);
     const { data: extra } = await admin.from("teams").select("owner_user_id").eq("owner_login", `adm${RUN}`);

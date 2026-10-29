@@ -36,6 +36,7 @@ Built for Indian local tournaments (bids start around ₹500), it works on phone
   - the phone vibrates when you're outbid
   - an **Up next** strip
   - a **Players** tab showing who is remaining, sold or unsold, and the live status
+- **Owners add their own players** (needs migration 008). The owner taps **Players → Ask for permission**, and the organiser approves it once on the **Teams** tab. The owner can then add players themselves, or share a **team join link** on WhatsApp. Players who fill it in go straight into that squad at Rs 0 (purse untouched, squad limit still applies). The organiser can turn it off at any time, which kills the link; players already added stay.
 - **Bid rules enforced by the database:**
   - increment slabs
   - max squad size
@@ -126,7 +127,7 @@ Built for Indian local tournaments (bids start around ₹500), it works on phone
 
 1. Sign up at https://supabase.com and click **New project**. For India, pick the **Mumbai (ap-south-1)** region.
 2. Open **SQL Editor → New query**, paste the whole of [`supabase/schema.sql`](supabase/schema.sql) and click **Run**. It already includes every migration.
-   - **Upgrading an older project?** Instead, run the files in [`supabase/migrations/`](supabase/migrations) that you haven't run yet, in order (002 → 007).
+   - **Upgrading an older project?** Instead, run the files in [`supabase/migrations/`](supabase/migrations) that you haven't run yet, in order (002 → 008).
 3. Go to **Authentication → Sign In / Providers → Email**. Make sure sign-ups are allowed, and turn **off** "Confirm email".
 4. Go to **Project Settings → API Keys** and copy:
    - the Project URL
@@ -220,7 +221,7 @@ They create temporary users and tournaments and delete them at the end.
 
 ```
 supabase/schema.sql              full database: tables, security rules, auction / scoring / admin functions
-supabase/migrations/             step-by-step upgrades (002-007) for existing projects
+supabase/migrations/             step-by-step upgrades (002-008) for existing projects
 src/lib/fixtures.ts              fixture generation, scheduling, points table, NRR, knockout progression
 src/lib/scoring.ts               ball-by-ball engine: replays events into innings, scorecards, stats
 src/lib/hooks.ts                 live data hooks (auction, matches, scoring, stats) with realtime + fallback refresh
@@ -228,6 +229,8 @@ src/components/                  UI kit, auction stage, player board, fixtures, 
 src/app/dashboard                organiser's tournaments
 src/app/t/[id]/...               tournament admin: overview, players, teams, live auction, fixtures, registration, settings
 src/app/bid/[id]                 team owner bidding screen (phone)
+src/app/bid/[id]/squad           team owner adds players / shares the team join link
+src/app/join/[token]             team join form (public, from the owner's WhatsApp link)
 src/app/live/[id]                auction big screen (public)
 src/app/squads/[id]              squads + Excel download (public)
 src/app/fixtures/[id]            fixtures, points table, knockouts, stats (public)

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { CalendarDays, Gavel, LogOut, Wifi, WifiOff } from "lucide-react";
+import { CalendarDays, Gavel, LogOut, UserPlus, Wifi, WifiOff } from "lucide-react";
 import { BidHistory, PlayerStage } from "@/components/auction";
 import { PlayerBoard, UpNext } from "@/components/player-board";
 import { toast } from "@/components/toast";
@@ -86,6 +87,9 @@ export default function BidPage() {
               {t.name}
             </p>
           </div>
+          <Link href={`/bid/${t.id}/squad`} className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100" title="Add players to my team">
+            <UserPlus className="size-4" /> Players
+          </Link>
           <a href={`/fixtures/${t.id}`} className="flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100" title="Fixtures and points table">
             <CalendarDays className="size-4" /> Fixtures
           </a>
@@ -127,7 +131,12 @@ export default function BidPage() {
             ) : tab === "bids" ? (
               <BidHistory bids={bids} teams={teams} />
             ) : mySquad.length === 0 ? (
-              <p className="py-4 text-center text-sm text-slate-400">No players yet</p>
+              <p className="py-4 text-center text-sm text-slate-400">
+                No players yet ·{" "}
+                <Link href={`/bid/${t.id}/squad`} className="font-medium text-emerald-700 hover:underline">
+                  Add your own players
+                </Link>
+              </p>
             ) : (
               <ul className="divide-y divide-slate-100">
                 {mySquad.map((p) => (

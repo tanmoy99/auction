@@ -13,13 +13,14 @@ export function TournamentShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, access, ready } = useRequireOrganiser();
   const live = useTournamentLive(ready ? id : undefined);
-  const { tournament, players } = live;
+  const { tournament, teams, players } = live;
 
   const pending = players.filter((p) => p.status === "pending").length;
+  const accessRequests = teams.filter((x) => x.player_access === "requested").length;
   const tabs = [
     { href: `/t/${id}`, label: "Overview" },
     { href: `/t/${id}/players`, label: "Players", badge: pending },
-    { href: `/t/${id}/teams`, label: "Teams" },
+    { href: `/t/${id}/teams`, label: "Teams", badge: accessRequests },
     { href: `/t/${id}/auction`, label: "Live auction" },
     { href: `/t/${id}/fixtures`, label: "Fixtures" },
     { href: `/t/${id}/registration`, label: "Registration" },
