@@ -16,6 +16,9 @@ export async function compressImage(file: File, maxSize = 600): Promise<Blob> {
 export async function uploadPhoto(tournamentId: string, file: File) {
   const blob = await compressImage(file);
   const path = `${tournamentId}/${crypto.randomUUID()}.jpg`;
+  const url = supabase.storage.from("photos").getPublicUrl(path).data.publicUrl;
+  const { error: reserveError } = await supabase.rpc("reserve_photo", { p_path: path, p_url: url });
+  if (reserveError) throw reserveError;
   const { error } = await supabase.storage.from("photos").upload(path, blob, { contentType: "image/jpeg" });
   if (error) throw error;
   return supabase.storage.from("photos").getPublicUrl(path).data.publicUrl;

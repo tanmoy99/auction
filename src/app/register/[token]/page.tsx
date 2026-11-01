@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { CheckCircle2, MapPin } from "lucide-react";
@@ -24,10 +25,7 @@ export default function RegisterPage() {
 
   useEffect(() => {
     supabase
-      .from("tournaments")
-      .select("name, venue, registration_open")
-      .eq("registration_token", token)
-      .maybeSingle()
+      .rpc("registration_info", { p_token: token })
       .then(({ data }) => setInfo((data as Info) ?? null));
   }, [token]);
 
@@ -59,7 +57,7 @@ export default function RegisterPage() {
 
   let content: React.ReactNode;
   if (info === undefined) content = <PageLoader />;
-  else if (info === null) content = <p className="py-10 text-center text-slate-600">This registration link is not valid.</p>;
+  else if (info === null) content = <div className="space-y-4 py-10 text-center text-slate-600"><p>This registration link is invalid, expired or temporarily unavailable. Ask the organiser for the current link.</p><Button variant="secondary" onClick={() => window.location.reload()}>Retry</Button><Link href="/" className="block text-emerald-700">Back to CricMitra</Link></div>;
   else if (!info.registration_open) content = <p className="py-10 text-center text-slate-600">Registration for {info.name} is closed.</p>;
   else if (done)
     content = (

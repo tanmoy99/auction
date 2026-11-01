@@ -1,5 +1,6 @@
 "use client";
 
+import { Sponsors } from "@/components/sponsors";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -98,6 +99,7 @@ export default function SettingsPage() {
   }
 
   return (
+    <>
     <form onSubmit={onSubmit} className="mx-auto max-w-3xl space-y-6">
       <Card className="space-y-4 p-5">
         <h2 className="font-semibold text-slate-900">Tournament</h2>
@@ -208,8 +210,10 @@ export default function SettingsPage() {
           <Button type="button" variant="danger" onClick={deleteTournament}>
             Delete tournament
           </Button>
-        </div>
+    </div>
       </Card>
     </form>
+    <Sponsors tournamentId={t.id} manage />
+    </>
   );
 }

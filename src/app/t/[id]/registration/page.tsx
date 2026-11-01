@@ -1,5 +1,6 @@
 "use client";
 
+import { QrShare } from "@/components/qr-share";
 import { useState } from "react";
 import { Copy, ExternalLink, MessageCircle, RefreshCw } from "lucide-react";
 import { useTournament } from "@/components/tournament-context";
@@ -44,6 +45,7 @@ function onFormSubmit(e) {
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      <QrShare path={`/register/${t.registration_token}`} label="Registration QR" />
       <Card className="p-5">
         <div className="flex items-start justify-between gap-3">
           <div>

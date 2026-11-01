@@ -1,5 +1,7 @@
 "use client";
 
+import { ResourceError } from "@/components/resource-error";
+import { Sponsors } from "@/components/sponsors";
 import { useParams } from "next/navigation";
 import { Maximize } from "lucide-react";
 import { OverMarks, TestStatus, breakText, useScoreboard } from "@/components/scorecard";
@@ -19,6 +21,7 @@ export default function MatchScreen() {
         <Spinner />
       </div>
     );
+  if (live.error) return <ResourceError message={live.error} retry={live.reload} />;
   const m = live.match;
   if (!m) return <div className="flex min-h-screen flex-1 items-center justify-center bg-slate-950 text-white/60">Match not found</div>;
 
@@ -149,6 +152,7 @@ export default function MatchScreen() {
           </>
         )}
       </main>
+      <div className="relative mx-auto w-full max-w-3xl px-4 pb-4 text-slate-900"><Sponsors tournamentId={m.tournament_id} /></div>
     </div>
   );
 }

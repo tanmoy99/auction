@@ -1,4 +1,4 @@
-export const APP_NAME = "CricMate";
+export const APP_NAME = "CricMitra";
 
 // Team owners sign in with a short login ID; Supabase needs an email, so we add this domain internally.
 // It keeps the old site name on purpose: existing owner logins were created with it.

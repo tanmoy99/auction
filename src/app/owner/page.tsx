@@ -22,9 +22,7 @@ export default function OwnerHome() {
     if (loading) return;
     if (!user) return router.replace("/login");
     supabase
-      .from("teams")
-      .select("*, tournaments(id, name, status)")
-      .eq("owner_user_id", user.id)
+      .rpc("owner_teams")
       .then(({ data }) => {
         const list = (data as Row[]) ?? [];
         if (list.length === 1) router.replace(`/bid/${list[0]!.tournament_id}`);

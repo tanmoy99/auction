@@ -1,5 +1,6 @@
 "use client";
 
+import { ResourceError } from "@/components/resource-error";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { ArrowLeft, CalendarDays, ExternalLink, MonitorPlay, PauseCircle, ShieldCheck } from "lucide-react";
@@ -25,10 +26,12 @@ export function TournamentShell({ children }: { children: React.ReactNode }) {
     { href: `/t/${id}/fixtures`, label: "Fixtures" },
     { href: `/t/${id}/registration`, label: "Registration" },
     { href: `/t/${id}/settings`, label: "Settings" },
+    { href: `/t/${id}/history`, label: "History" },
   ];
 
   let body: React.ReactNode;
   if (!ready || live.loading) body = <PageLoader />;
+  else if (live.error) body = <ResourceError message={live.error} retry={live.reload} />;
   else if (!tournament || (tournament.organiser_id !== user?.id && !access?.is_admin))
     body = (
       <div className="mx-auto max-w-6xl px-4 py-10">

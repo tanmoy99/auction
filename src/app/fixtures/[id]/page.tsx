@@ -1,5 +1,7 @@
 "use client";
 
+import { ResourceError } from "@/components/resource-error";
+import { QrShare } from "@/components/qr-share";
 import { useParams } from "next/navigation";
 import { CalendarDays } from "lucide-react";
 import { Logo } from "@/components/app-header";
@@ -10,11 +12,12 @@ import { useMatches, useTournamentLive } from "@/lib/hooks";
 // Public page: schedule, results, points table and knockouts. Updates live.
 export default function PublicFixturesPage() {
   const { id } = useParams<{ id: string }>();
-  const { tournament: t, teams, loading } = useTournamentLive(id);
-  const { matches, loading: matchesLoading } = useMatches(id);
+  const { tournament: t, teams, loading, error, reload } = useTournamentLive(id);
+  const { matches, loading: matchesLoading, error: matchError, reload: reloadMatches } = useMatches(id);
 
   if (loading || matchesLoading) return <PageLoader />;
-  if (!t) return <p className="py-20 text-center text-slate-500">Tournament not found</p>;
+  if (error || matchError) return <ResourceError message={error || matchError!} retry={() => { void reload(); void reloadMatches(); }} />;
+  if (!t) return <ResourceError message="Tournament not found. Check the link with the organiser." />;
 
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
@@ -28,6 +31,7 @@ export default function PublicFixturesPage() {
           <Button variant="secondary">Squads</Button>
         </a>
       </div>
+      <div className="mb-4"><QrShare path={`/fixtures/${t.id}`} /></div>
       {matches.length ? (
         <FixturesView matches={matches} teams={teams} settings={t.fixture_settings} />
       ) : (

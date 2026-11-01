@@ -5,6 +5,7 @@ import type { WorkBook } from "xlsx";
 import { Download, FileSpreadsheet, Link2 } from "lucide-react";
 import { toast } from "@/components/toast";
 import { Button, Input, Modal, cn } from "@/components/ui";
+import { normalisePhone, validatePlayer } from "@/lib/registration-validation";
 import { TEMPLATE_HEADERS, describeColumns, mapRow, type ImportedPlayer } from "@/lib/fields";
 import { errorMessage, rupees } from "@/lib/format";
 import { authHeader, supabase } from "@/lib/supabase";
@@ -15,7 +16,7 @@ const FIELD_LABELS: Record<string, string> = {
   age: "Age", city: "City", photo_url: "Photo", category: "Category", base_price: "Base price",
 };
 
-const digits = (phone: string | null) => (phone ?? "").replace(/\D/g, "").slice(-10);
+const digits = (phone: string | null) => { try { return normalisePhone(phone, false) ?? ""; } catch { return ""; } };
 
 export function ImportModal({
   tournament,
@@ -46,7 +47,9 @@ export function ImportModal({
     const out: ImportedPlayer[] = [];
     let dupes = 0;
     for (const record of records) {
-      const p = mapRow(record);
+      const mapped = mapRow(record);
+      if (!mapped.name) continue;
+      const p = validatePlayer(mapped, false);
       if (!p.name) continue;
       const key = digits(p.phone);
       if (key && seen.has(key)) {
@@ -103,35 +106,11 @@ export function ImportModal({
     if (!rows?.length) return;
     setBusy(true);
     try {
-      for (let i = 0; i < rows.length; i += 200) {
-        const chunk = rows.slice(i, i + 200);
-        const { data, error } = await supabase
-          .from("players")
-          .insert(
-            chunk.map((p) => ({
-              name: p.name,
-              role: p.role,
-              batting_style: p.batting_style,
-              bowling_style: p.bowling_style,
-              age: p.age,
-              city: p.city,
-              photo_url: p.photo_url,
-              category: p.category,
-              base_price: p.base_price ?? tournament.base_price,
-              tournament_id: tournament.id,
-              source: mode === "sheet" ? "google-sheet" : "excel",
-            })),
-          )
-          .select("id");
-        if (error) throw error;
-        const contacts = data
-          .map((d, j) => ({ player_id: d.id as string, tournament_id: tournament.id, phone: chunk[j]!.phone }))
-          .filter((c) => c.phone);
-        if (contacts.length) {
-          const { error: contactError } = await supabase.from("player_contacts").insert(contacts);
-          if (contactError) throw contactError;
-        }
-      }
+      const { error } = await supabase.rpc("import_players", {
+        p_tournament: tournament.id,
+        p_players: rows.map(p => ({ ...p, base_price: p.base_price ?? tournament.base_price, source: mode === "sheet" ? "google-sheet" : "excel" })),
+      });
+      if (error) throw error;
       toast(`Imported ${rows.length} players`, "success");
       onImported();
       onClose();

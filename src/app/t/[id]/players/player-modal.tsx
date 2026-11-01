@@ -63,22 +63,9 @@ export function PlayerModal({
         category: category.trim() || null,
         base_price: Number(basePrice),
       };
-      let id = player?.id;
-      if (id) {
-        const { error } = await supabase.from("players").update(row).eq("id", id);
-        if (error) throw error;
-      } else {
-        const { data, error } = await supabase
-          .from("players")
-          .insert({ ...row, tournament_id: tournament.id, source: "manual" })
-          .select("id")
-          .single();
-        if (error) throw error;
-        id = data.id;
-      }
-      const { error } = await supabase
-        .from("player_contacts")
-        .upsert({ player_id: id, tournament_id: tournament.id, phone: values.phone.trim() || null });
+      const { error } = await supabase.rpc("save_player_contact", {
+        p_tournament: tournament.id, p_player: player?.id ?? null, p_data: row, p_phone: values.phone.trim() || null,
+      });
       if (error) throw error;
       toast(player ? "Player updated" : "Player added", "success");
       onSaved();

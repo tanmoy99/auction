@@ -56,7 +56,8 @@ export default function BidPage() {
   const timeUp = left != null && left <= 0;
 
   let blocked: string | null = null;
-  if (t.suspended) blocked = "Auction paused by the admin";
+  if (typeof navigator !== "undefined" && !navigator.onLine) blocked = "Offline: reconnect before bidding";
+  else if (t.suspended) blocked = "Auction paused by the admin";
   else if (t.status === "completed") blocked = "Auction finished";
   else if (!bidding) blocked = t.status === "setup" ? "Auction hasn't started yet" : "Waiting for next player";
   else if (leading) blocked = "You are the highest bidder";
@@ -65,6 +66,7 @@ export default function BidPage() {
   else if (amount > limit) blocked = `Not enough purse (max ${rupees(limit)})`;
 
   async function bid(value: number) {
+    if (!navigator.onLine) return toast("Reconnect before bidding. Offline bids are not queued.", "error");
     setPlacing(true);
     const { error } = await supabase.rpc("place_bid", { p_tournament: t!.id, p_amount: value });
     setPlacing(false);

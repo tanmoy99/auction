@@ -1,8 +1,10 @@
-# CricMate
+# CricMitra
 
 A one-stop site for local cricket tournaments: **player registration → live auction → fixtures → ball-by-ball scoring → stats**.
 
 Built for Indian local tournaments (bids start around ₹500), it works on phones and runs on the free tiers of Supabase and Vercel.
+
+**Local reliability update:** See [implementation, validation, migration order and rollback notes](docs/LOCAL-REVIEW.md). Existing projects must deploy the updated client before migration 018 restricts public base-table reads. No production migration or scheduler is enabled automatically.
 
 **Live demo:** https://auction-mu-sandy.vercel.app
 
@@ -196,7 +198,7 @@ npm run seed:fixtures -- you@example.com   # demo fixtures: league + IPL playoff
 ```bash
 npm run test:scoring    # cricket rules of the scoring engine (no database needed)
 npm run test:fixtures   # fixture formats, byes, playoffs, points table, NRR (no database needed)
-npm run test:auction    # end-to-end checks against your Supabase project (needs .env.local; run `npm run dev` for the website checks)
+npm run test:auction    # dedicated disposable Supabase project only; see docs/LOCAL-REVIEW.md
 ```
 
 The database tests cover:
@@ -207,7 +209,7 @@ The database tests cover:
 - scorer PINs, the one-phone lock and guest approval
 - event order, undo, finishing a match and stats
 
-They create temporary users and tournaments and delete them at the end.
+They create temporary users and tournaments and delete them at the end. The suite now requires explicit dedicated test-project credentials and refuses the ordinary application project. Follow the test environment instructions in [LOCAL-REVIEW.md](docs/LOCAL-REVIEW.md); never point it at production.
 
 ---
 
@@ -228,7 +230,7 @@ They create temporary users and tournaments and delete them at the end.
 **Before charging organisers,** move to Supabase Pro (~$25 a month) and Vercel Pro (~$20 a month), or host the website on Cloudflare instead, and add a domain.
 
 **Not built yet:**
-- offline scoring (a tap made with no signal fails and has to be tapped again)
+- an installable offline app shell (pending scoring actions persist locally, but reopening the app requires a connection)
 - super overs scored ball by ball (after a tie, the scorer picks the super-over winner)
 - "last man stands"
 - online payments
@@ -239,7 +241,7 @@ They create temporary users and tournaments and delete them at the end.
 
 ```
 supabase/schema.sql              full database: tables, security rules, auction / scoring / admin functions
-supabase/migrations/             step-by-step upgrades (002-010) for existing projects
+supabase/migrations/             step-by-step upgrades (002-018) for existing projects
 src/lib/fixtures.ts              fixture generation, scheduling, points table, NRR, knockout progression
 src/lib/scoring.ts               ball-by-ball engine: replays events into innings, scorecards, stats
 src/lib/hooks.ts                 live data hooks (auction, matches, scoring, stats) with realtime + fallback refresh

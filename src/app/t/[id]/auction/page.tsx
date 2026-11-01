@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -352,6 +352,10 @@ type Call = (key: string, fn: string, args: Record<string, unknown>, success?: s
 // Before: readiness checklist + Start. During: Finish. After: summary, what to do next, Reopen.
 function AuctionStatusCard({ busy, call }: { busy: string | null; call: Call }) {
   const { tournament: t, teams, players, state } = useTournament();
+  const [missingScorers, setMissingScorers] = useState<number | null>(null);
+  useEffect(() => {
+    supabase.rpc("scorer_readiness", { p_tournament: t.id }).then(({ data, error }) => setMissingScorers(error ? null : data));
+  }, [t.id]);
   const count = (s: string) => players.filter((p) => p.status === s).length;
   const available = count("available");
   const unsold = count("unsold");
@@ -378,6 +382,12 @@ function AuctionStatusCard({ busy, call }: { busy: string | null; call: Call }) 
         href: `/t/${t.id}/players`,
       },
     ];
+    checks.push(
+      { ok: t.min_squad <= t.max_squad, warn: false, text: "Minimum squad must not exceed maximum; adjust Settings", href: `/t/${t.id}/settings` },
+      { ok: teams.every(team => team.purse - team.spent >= Math.max(0,t.min_squad - players.filter(p=>p.team_id===team.id&&p.status==="sold").length)*t.base_price), warn: false, text: "Each team needs enough purse to fill its minimum squad at base price; adjust Teams or Settings", href: `/t/${t.id}/teams` },
+      { ok: available + sold >= teams.length*t.min_squad, warn: true, text: "Approve enough players to fill every minimum squad", href: `/t/${t.id}/players` },
+      { ok: missingScorers === 0, warn: true, text: missingScorers === null ? "Scorer setup could not be checked; review Fixtures" : missingScorers ? `${missingScorers} scheduled matches need a volunteer scorer PIN; configure in Fixtures` : "Scorer PINs are ready for scheduled matches", href: `/t/${t.id}/fixtures` },
+    );
     const ready = checks.every((c) => c.ok || c.warn);
     return (
       <Card className="p-5">

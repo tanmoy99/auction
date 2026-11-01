@@ -11,7 +11,15 @@
     "seed:demo": "node --env-file=.env.local scripts/seed-demo.mjs",
     "test:fixtures": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-fixtures.mjs",
     "seed:fixtures": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env.local scripts/seed-fixtures.mjs",
-    "test:scoring": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-scoring.mjs"
+    "test:scoring": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-scoring.mjs",
+    "test:hardening": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-hardening.mjs",
+    "test:database": "node scripts/test-database.mjs",
+    "test:browser": "node scripts/test-browser.mjs",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test:scoring-browser": "node scripts/test-scoring-browser.mjs",
+    "test:result-card": "node scripts/test-result-card.mjs",
+    "verify:local": "npm run lint && npm run typecheck && npm run test:fixtures && npm run test:scoring && npm run test:hardening && npm run test:registration && npm run test:database && npm run test:result-card && npm run build",
+    "test:registration": "node --test scripts/test-registration-routes.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
@@ -22,12 +30,15 @@
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "https://registry.npmjs.org/@electric-sql/pglite/-/pglite-0.5.13.tgz",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
+    "jsqr": "^1.4.0",
+    "playwright": "https://registry.npmjs.org/playwright/-/playwright-1.64.1.tgz",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

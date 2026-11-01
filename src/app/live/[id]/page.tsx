@@ -1,5 +1,6 @@
 "use client";
 
+import { Sponsors } from "@/components/sponsors";
 import { useMemo } from "react";
 import { useParams } from "next/navigation";
 import { Gavel, Maximize, Trophy } from "lucide-react";
@@ -209,6 +210,7 @@ export default function LiveScreen() {
           ))}
         </div>
       </footer>
+      <div className="relative mx-auto w-full max-w-3xl px-4 pb-4 text-slate-900"><Sponsors tournamentId={t.id} /></div>
     </div>
   );
 }

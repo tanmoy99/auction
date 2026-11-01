@@ -1807,3 +1807,574 @@ grant execute on function
   public.scorer_lineup(uuid, text, text, uuid, jsonb),
   public.scorer_finish(uuid, text, text, jsonb, jsonb, jsonb)
   to anon, authenticated;
+
+-- CRICMATE HARDENING MIGRATIONS 011+
+-- Apply in a transaction. Existing duplicates stop this migration without deleting data.
+begin;
+
+create or replace function public.mobile_key(phone text) returns text
+language sql immutable set search_path = public as $$
+  select case
+    when d ~ '^[6-9][0-9]{9}$' then d
+    when d ~ '^91[6-9][0-9]{9}$' then substring(d from 3)
+    when d ~ '^0[6-9][0-9]{9}$' then substring(d from 2)
+  end from (select regexp_replace(coalesce(phone,''), '[^0-9]', '', 'g') d) s;
+$$;
+
+do $$ begin
+  if exists (select 1 from public.player_contacts
+    where public.mobile_key(phone) is not null
+    group by tournament_id, public.mobile_key(phone) having count(*) > 1) then
+    raise exception 'Duplicate mobile numbers exist. Review player_contacts grouped by tournament_id and mobile_key(phone), resolve explicitly, then rerun 011. No records have been deleted.';
+  end if;
+end $$;
+create unique index if not exists contacts_tournament_mobile_unique
+  on public.player_contacts(tournament_id, public.mobile_key(phone))
+  where public.mobile_key(phone) is not null;
+
+create or replace function public.guard_contact() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists(select 1 from public.players where id = new.player_id and tournament_id = new.tournament_id) then
+    raise exception 'Contact must belong to the player tournament';
+  end if;
+  if nullif(trim(new.phone),'') is not null then
+    if public.mobile_key(new.phone) is null or new.phone !~ '^[+0-9 ().-]+$' then raise exception 'Invalid Indian mobile number'; end if;
+    new.phone := '+91' || public.mobile_key(new.phone);
+  end if;
+  return new;
+end $$;
+drop trigger if exists guard_contact on public.player_contacts;
+create trigger guard_contact before insert or update on public.player_contacts for each row execute function public.guard_contact();
+revoke all on function public.guard_contact() from public, anon, authenticated;
+
+create or replace function public.photo_path_allowed(path text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if path !~ '^[0-9a-fA-F-]{36}/[^/]+$' then return false; end if;
+  return public.is_organiser(split_part(path, '/', 1)::uuid);
+exception when invalid_text_representation then return false;
+end $$;
+revoke all on function public.photo_path_allowed(text) from public, anon;
+grant execute on function public.photo_path_allowed(text) to authenticated;
+drop policy if exists "photos upload" on storage.objects;
+drop policy if exists "photos update" on storage.objects;
+drop policy if exists "photos delete" on storage.objects;
+create policy "photos upload" on storage.objects for insert to authenticated
+  with check(bucket_id = 'photos' and public.photo_path_allowed(name));
+create policy "photos update" on storage.objects for update to authenticated
+  using(bucket_id = 'photos' and public.photo_path_allowed(name))
+  with check(bucket_id = 'photos' and public.photo_path_allowed(name));
+create policy "photos delete" on storage.objects for delete to authenticated
+  using(bucket_id = 'photos' and public.photo_path_allowed(name));
+
+-- Service-only, shared across server instances. Keys are hashes, never raw addresses.
+create table if not exists public.registration_limits (
+  key text primary key, window_at timestamptz not null, requests integer not null
+);
+alter table public.registration_limits enable row level security;
+revoke all on public.registration_limits from anon, authenticated;
+create or replace function public.registration_allow(p_key text, p_limit integer default 20) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare n integer;
+begin
+  insert into public.registration_limits as r values (p_key, now(), 1)
+  on conflict(key) do update set
+    requests = case when r.window_at < now() - interval '1 minute' then 1 else r.requests + 1 end,
+    window_at = case when r.window_at < now() - interval '1 minute' then now() else r.window_at end
+  returning requests into n;
+  delete from public.registration_limits where window_at < now() - interval '1 day';
+  return n <= p_limit;
+end $$;
+revoke all on function public.registration_allow(text, integer) from public, anon, authenticated;
+grant execute on function public.registration_allow(text, integer) to service_role;
+
+create or replace function public.register_player(p_token uuid, p_player jsonb, p_source text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare t public.tournaments%rowtype; v_id uuid; mobile text;
+begin
+  select * into t from public.tournaments where registration_token = p_token for share;
+  if not found then raise exception 'Invalid registration link'; end if;
+  if not t.registration_open or not public.tournament_active(t.id) then raise exception 'Registration is closed'; end if;
+  mobile := public.mobile_key(p_player->>'phone');
+  if mobile is null then raise exception 'Invalid Indian mobile number'; end if;
+  if length(trim(coalesce(p_player->>'name',''))) not between 1 and 80 then raise exception 'Invalid player name'; end if;
+  -- The unique contact index arbitrates concurrent requests. This block rolls BOTH inserts back.
+  begin
+    insert into public.players(tournament_id,name,role,batting_style,bowling_style,age,city,photo_url,base_price,status,source)
+    values(t.id,trim(p_player->>'name'),p_player->>'role',p_player->>'batting_style',p_player->>'bowling_style',
+      (p_player->>'age')::integer,p_player->>'city',p_player->>'photo_url',t.base_price,'pending',p_source)
+    returning id into v_id;
+    insert into public.player_contacts values(v_id,t.id,'+91' || mobile);
+  exception when unique_violation then
+    if exists(select 1 from public.player_contacts where tournament_id=t.id and public.mobile_key(phone)=mobile) then
+      return jsonb_build_object('duplicate',true);
+    end if;
+    raise;
+  end;
+  return jsonb_build_object('id',v_id,'duplicate',false);
+end $$;
+revoke all on function public.register_player(uuid,jsonb,text) from public, anon, authenticated;
+grant execute on function public.register_player(uuid,jsonb,text) to service_role;
+commit;
+
+
+begin;
+-- Explicit allowlists; newly added columns never become public by accident.
+create or replace view public.tournament_display as
+select id, name, venue, starts_on, team_budget, base_price, min_squad, max_squad,
+  bid_timer_seconds, increment_slabs, auto_close, auto_next, result_pause_seconds,
+  registration_open, status, suspended, fixture_settings, created_at,
+  case when organiser_id = auth.uid() or public.is_admin() then organiser_id end as organiser_id,
+  case when organiser_id = auth.uid() or public.is_admin() then registration_token end as registration_token,
+  case when organiser_id = auth.uid() or public.is_admin() then suspended_reason end as suspended_reason
+from public.tournaments;
+create or replace view public.team_display as
+select id, tournament_id, name, short_name, color, logo_url, purse, spent, created_at,
+  case when owner_user_id = auth.uid() or public.is_organiser(tournament_id) then owner_name end as owner_name,
+  case when owner_user_id = auth.uid() or public.is_organiser(tournament_id) then owner_user_id end as owner_user_id,
+  case when owner_user_id = auth.uid() or public.is_organiser(tournament_id) then owner_login end as owner_login,
+  case when owner_user_id = auth.uid() or public.is_organiser(tournament_id) then player_access else 'none' end as player_access
+from public.teams;
+revoke all on public.tournament_display, public.team_display from anon, authenticated;
+grant select on public.tournament_display, public.team_display to anon, authenticated;
+
+create or replace function public.registration_info(p_token uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('name', name, 'venue', venue,
+    'registration_open', registration_open and public.tournament_active(id))
+  from public.tournaments where registration_token = p_token;
+$$;
+revoke all on function public.registration_info(uuid) from public;
+grant execute on function public.registration_info(uuid) to anon, authenticated;
+
+create or replace function public.owner_teams() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(to_jsonb(tm) || jsonb_build_object('tournaments',
+    jsonb_build_object('id',t.id,'name',t.name,'status',t.status))), '[]'::jsonb)
+  from public.teams tm join public.tournaments t on t.id = tm.tournament_id
+  where tm.owner_user_id = auth.uid();
+$$;
+revoke all on function public.owner_teams() from public, anon;
+grant execute on function public.owner_teams() to authenticated;
+commit;
+
+
+begin;
+alter table public.matches add column if not exists score_revision bigint not null default 0;
+create table if not exists public.scoring_actions (
+  match_id uuid not null references public.matches on delete cascade,
+  action_id uuid not null,
+  device text not null,
+  payload jsonb not null,
+  revision bigint not null,
+  created_at timestamptz not null default now(),
+  primary key(match_id,action_id)
+);
+alter table public.scoring_actions enable row level security;
+revoke all on public.scoring_actions from anon, authenticated;
+
+create or replace function public.bump_score_revision() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  update public.matches set score_revision = score_revision + 1
+    where id = case when tg_op = 'DELETE' then old.match_id else new.match_id end;
+  return null;
+end $$;
+drop trigger if exists score_event_revision on public.match_events;
+create trigger score_event_revision after insert or update or delete on public.match_events
+  for each row execute function public.bump_score_revision();
+drop trigger if exists score_lineup_revision on public.match_players;
+create trigger score_lineup_revision after insert or update or delete on public.match_players
+  for each row execute function public.bump_score_revision();
+drop trigger if exists score_device_revision on public.match_scorers;
+create trigger score_device_revision after update of device_id, pin on public.match_scorers
+  for each row when (new.device_id is distinct from old.device_id or new.pin is distinct from old.pin)
+  execute function public.bump_score_revision();
+
+create or replace function public.score_config_revision() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if (to_jsonb(new) - array['score_revision','live_score','status']) is distinct from
+     (to_jsonb(old) - array['score_revision','live_score','status'])
+     or (new.status is distinct from old.status and (new.status = 'completed' or old.status = 'completed')) then
+    new.score_revision := old.score_revision + 1;
+  end if;
+  return new;
+end $$;
+drop trigger if exists score_config_revision on public.matches;
+create trigger score_config_revision before update on public.matches for each row execute function public.score_config_revision();
+
+create or replace function public.scorer_action(p_match uuid, p_pin text, p_device text,
+  p_action uuid, p_revision bigint, p_kind text, p_seq integer, p_data jsonb, p_live jsonb)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare m public.matches%rowtype; previous public.scoring_actions%rowtype; payload jsonb; revision bigint;
+begin
+  -- Same lock order as legacy scorer_ok -> matches. Claims and writes cannot race.
+  perform 1 from public.match_scorers where match_id = p_match for update;
+  if not public.scorer_ok(p_match,p_pin,p_device) then raise exception 'Wrong PIN'; end if;
+  select * into m from public.matches where id = p_match for update;
+  payload := jsonb_build_object('revision',p_revision,'kind',p_kind,'seq',p_seq,'data',p_data,'live',p_live);
+  select * into previous from public.scoring_actions where match_id=p_match and action_id=p_action;
+  if found then
+    if previous.device <> p_device or previous.payload <> payload then raise exception 'Action identifier reused with different input'; end if;
+    return previous.revision;
+  end if;
+  if m.status = 'completed' then raise exception 'This match is finished'; end if;
+  if m.score_revision <> p_revision then raise exception 'Score changed. Review pending actions before continuing'; end if;
+  if p_kind = 'undo' then
+    perform public.scorer_undo(p_match,p_pin,p_device,p_seq,p_live);
+  elsif p_kind = 'event' then
+    perform public.scorer_event(p_match,p_pin,p_device,p_seq,p_data->>'type',p_data,p_live);
+  else raise exception 'Unknown scoring action'; end if;
+  select score_revision into revision from public.matches where id=p_match;
+  insert into public.scoring_actions values(p_match,p_action,p_device,payload,revision,now());
+  return revision;
+end $$;
+revoke all on function public.bump_score_revision(), public.score_config_revision() from public,anon,authenticated;
+revoke all on function public.scorer_action(uuid,text,text,uuid,bigint,text,integer,jsonb,jsonb) from public;
+grant execute on function public.scorer_action(uuid,text,text,uuid,bigint,text,integer,jsonb,jsonb) to anon,authenticated;
+commit;
+
+
+begin;
+-- Called by an explicitly installed one-second pg_cron job, never a minute-level Vercel cron.
+create or replace function public.tick_due_auctions() returns integer
+language plpgsql security definer set search_path = public as $$
+declare r record; n integer := 0;
+begin
+  for r in select s.tournament_id from public.auction_state s join public.tournaments t on t.id=s.tournament_id
+    where t.status='live' and not t.suspended and (
+      (s.phase='bidding' and t.auto_close and s.ends_at <= now()) or
+      (s.phase in ('sold','unsold') and t.auto_next and s.updated_at + make_interval(secs=>t.result_pause_seconds) <= now()))
+    order by s.updated_at limit 100
+  loop
+    perform public.auction_tick(r.tournament_id); n := n+1;
+  end loop;
+  return n;
+end $$;
+revoke all on function public.tick_due_auctions() from public,anon,authenticated;
+grant execute on function public.tick_due_auctions() to service_role;
+
+create table if not exists public.audit_history (
+  id bigint generated always as identity primary key,
+  tournament_id uuid not null references public.tournaments on delete cascade,
+  actor uuid, actor_kind text not null, at timestamptz not null default now(),
+  action text not null, entity_id uuid, before_value jsonb, after_value jsonb
+);
+alter table public.audit_history enable row level security;
+revoke all on public.audit_history from anon,authenticated;
+grant select on public.audit_history to authenticated;
+drop policy if exists "organiser reads audit" on public.audit_history;
+create policy "organiser reads audit" on public.audit_history for select to authenticated using(public.is_organiser(tournament_id));
+create or replace function public.record_audit_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare tid uuid; eid uuid; old_value jsonb; new_value jsonb;
+begin
+  if tg_table_name='players' then
+    tid:=new.tournament_id; eid:=new.id;
+    old_value:=jsonb_build_object('team_id',old.team_id,'status',old.status,'sold_price',old.sold_price);
+    new_value:=jsonb_build_object('team_id',new.team_id,'status',new.status,'sold_price',new.sold_price);
+  elsif tg_table_name='matches' then
+    tid:=new.tournament_id; eid:=new.id;
+    old_value:=jsonb_build_object('status',old.status,'result',old.result_text,'winner',old.winner_team_id,'a_runs',old.a_runs,'b_runs',old.b_runs,'innings',old.innings);
+    new_value:=jsonb_build_object('status',new.status,'result',new.result_text,'winner',new.winner_team_id,'a_runs',new.a_runs,'b_runs',new.b_runs,'innings',new.innings);
+  elsif tg_table_name='match_scorers' then
+    tid:=new.tournament_id; eid:=new.match_id;
+    old_value:=jsonb_build_object('device_name',old.device_name);
+    new_value:=jsonb_build_object('device_name',new.device_name);
+  else
+    tid:=new.id; eid:=new.id;
+    old_value:=jsonb_build_object('status',old.status);
+    new_value:=jsonb_build_object('status',new.status);
+  end if;
+  if old_value is distinct from new_value or tg_table_name='match_scorers' then
+    insert into public.audit_history(tournament_id,actor,actor_kind,action,entity_id,before_value,after_value)
+      values(tid,auth.uid(),case when auth.uid() is null then 'database or PIN scorer' else 'account' end,
+        tg_table_name || '.changed',eid,old_value,new_value);
+  end if;
+  return null;
+end $$;
+revoke all on function public.record_audit_change() from public,anon,authenticated;
+drop trigger if exists audit_player on public.players;
+create trigger audit_player after update of team_id,status,sold_price on public.players for each row execute function public.record_audit_change();
+drop trigger if exists audit_match on public.matches;
+create trigger audit_match after update of result_text,winner_team_id,a_runs,b_runs,innings on public.matches for each row execute function public.record_audit_change();
+drop trigger if exists audit_takeover on public.match_scorers;
+create trigger audit_takeover after update of device_id on public.match_scorers for each row when (old.device_id is distinct from new.device_id) execute function public.record_audit_change();
+drop trigger if exists audit_auction on public.tournaments;
+create trigger audit_auction after update of status on public.tournaments for each row execute function public.record_audit_change();
+
+create table if not exists public.sponsors (
+  id uuid primary key default gen_random_uuid(), tournament_id uuid not null references public.tournaments on delete cascade,
+  name text not null check(length(trim(name)) between 1 and 80), logo_url text,
+  created_at timestamptz not null default now(),
+  check(logo_url is null or logo_url like 'https://%')
+);
+alter table public.sponsors enable row level security;
+drop policy if exists "sponsors public read" on public.sponsors;
+create policy "sponsors public read" on public.sponsors for select using(true);
+drop policy if exists "organiser manages sponsors" on public.sponsors;
+create policy "organiser manages sponsors" on public.sponsors for all to authenticated
+  using(public.is_organiser(tournament_id)) with check(public.is_organiser(tournament_id));
+grant select on public.sponsors to anon,authenticated;
+grant insert,update,delete on public.sponsors to authenticated;
+commit;
+
+
+begin;
+create table if not exists public.registration_uploads (
+  path text primary key, url text not null unique,
+  state text not null default 'pending' check(state in ('pending','referenced','deleting')),
+  created_at timestamptz not null default now()
+);
+alter table public.registration_uploads enable row level security;
+revoke all on public.registration_uploads from anon,authenticated;
+grant all on public.registration_uploads to service_role;
+create or replace function public.reference_registration_upload() returns trigger
+language plpgsql security definer set search_path=public as $$
+declare current_state text;
+begin
+  select state into current_state from public.registration_uploads where url=new.photo_url for update;
+  if found then
+    if current_state='deleting' then raise exception 'Photo expired. Upload it again'; end if;
+    update public.registration_uploads set state='referenced' where url=new.photo_url;
+  end if;
+  return new;
+end $$;
+drop trigger if exists reference_registration_upload on public.players;
+create trigger reference_registration_upload before insert or update of photo_url on public.players
+  for each row execute function public.reference_registration_upload();
+create or replace function public.claim_abandoned_uploads() returns table(path text)
+language sql security definer set search_path=public as $$
+  update public.registration_uploads j set state='deleting'
+  where j.path in (select x.path from public.registration_uploads x
+    where x.created_at < now()-interval '24 hours' and x.state in ('pending','deleting')
+      and not exists(select 1 from public.players p where p.photo_url=x.url)
+    order by x.created_at limit 100 for update skip locked)
+  returning j.path;
+$$;
+revoke all on function public.reference_registration_upload(),public.claim_abandoned_uploads() from public,anon,authenticated;
+grant execute on function public.claim_abandoned_uploads() to service_role;
+commit;
+
+
+begin;
+create or replace function public.save_player_contact(p_tournament uuid,p_player uuid,p_data jsonb,p_phone text)
+returns uuid language plpgsql security definer set search_path=public as $$
+declare v_id uuid;
+begin
+  if not public.is_organiser(p_tournament) then raise exception 'Only the organiser can do this'; end if;
+  if length(trim(coalesce(p_data->>'name',''))) not between 1 and 80 then raise exception 'Player name must contain 1–80 characters'; end if;
+  if p_data->>'role' is not null and p_data->>'role' not in ('Batsman','Bowler','All-rounder','Wicket-keeper') then raise exception 'Unknown player role'; end if;
+  if p_data->>'age' is not null and (p_data->>'age')::integer not between 5 and 100 then raise exception 'Age must be between 5 and 100'; end if;
+  if greatest(length(p_data->>'city'),length(p_data->>'batting_style'),length(p_data->>'bowling_style')) > 120 then raise exception 'Player fields are too long'; end if;
+  if p_player is null then
+    insert into public.players(tournament_id,name,role,batting_style,bowling_style,age,city,photo_url,category,base_price,source)
+    values(p_tournament,trim(p_data->>'name'),p_data->>'role',p_data->>'batting_style',p_data->>'bowling_style',
+      (p_data->>'age')::integer,p_data->>'city',p_data->>'photo_url',p_data->>'category',(p_data->>'base_price')::integer,
+      coalesce(p_data->>'source','manual')) returning id into v_id;
+  else
+    update public.players set name=trim(p_data->>'name'),role=p_data->>'role',batting_style=p_data->>'batting_style',
+      bowling_style=p_data->>'bowling_style',age=(p_data->>'age')::integer,city=p_data->>'city',photo_url=p_data->>'photo_url',
+      category=p_data->>'category',base_price=(p_data->>'base_price')::integer
+    where id=p_player and tournament_id=p_tournament returning id into v_id;
+    if not found then raise exception 'Player not found'; end if;
+  end if;
+  insert into public.player_contacts(player_id,tournament_id,phone) values(v_id,p_tournament,p_phone)
+    on conflict(player_id) do update set phone=excluded.phone;
+  return v_id;
+end $$;
+create or replace function public.import_players(p_tournament uuid,p_players jsonb) returns integer
+language plpgsql security definer set search_path=public as $$
+declare p jsonb; n integer:=0;
+begin
+  if not public.is_organiser(p_tournament) then raise exception 'Only the organiser can import'; end if;
+  if jsonb_typeof(p_players)<>'array' or jsonb_array_length(p_players)>2000 then raise exception 'Import up to 2000 players at a time'; end if;
+  for p in select * from jsonb_array_elements(p_players) loop
+    perform public.save_player_contact(p_tournament,null,p,p->>'phone'); n:=n+1;
+  end loop;
+  return n;
+end $$;
+create or replace function public.reserve_photo(p_path text,p_url text) returns void
+language plpgsql security definer set search_path=public as $$
+begin
+  if not public.photo_path_allowed(p_path) or p_url not like 'https://%/storage/v1/object/public/photos/' || p_path then
+    raise exception 'Invalid tournament photo path';
+  end if;
+  insert into public.registration_uploads(path,url) values(p_path,p_url);
+end $$;
+create or replace function public.reference_registration_upload() returns trigger
+language plpgsql security definer set search_path=public as $$
+declare current_state text; photo text := coalesce(to_jsonb(new)->>'photo_url',to_jsonb(new)->>'logo_url');
+begin
+  select state into current_state from public.registration_uploads where url=photo for update;
+  if found then
+    if current_state='deleting' then raise exception 'Photo expired. Upload it again'; end if;
+    update public.registration_uploads set state='referenced' where url=photo;
+  end if;
+  return new;
+end $$;
+drop trigger if exists reference_sponsor_upload on public.sponsors;
+create trigger reference_sponsor_upload before insert or update of logo_url on public.sponsors
+  for each row execute function public.reference_registration_upload();
+drop trigger if exists reference_team_upload on public.teams;
+create trigger reference_team_upload before insert or update of logo_url on public.teams
+  for each row execute function public.reference_registration_upload();
+revoke all on function public.save_player_contact(uuid,uuid,jsonb,text),public.import_players(uuid,jsonb),public.reserve_photo(text,text) from public,anon;
+grant execute on function public.save_player_contact(uuid,uuid,jsonb,text),public.import_players(uuid,jsonb),public.reserve_photo(text,text) to authenticated;
+create or replace function public.scorer_readiness(p_tournament uuid) returns integer
+language plpgsql stable security definer set search_path=public as $$
+begin
+  if not public.is_organiser(p_tournament) then raise exception 'Only the organiser can do this'; end if;
+  return (select count(*)::integer from public.matches m where m.tournament_id=p_tournament
+    and m.status<>'completed' and m.team_a_id is not null and m.team_b_id is not null
+    and not exists(select 1 from public.match_scorers sc where sc.match_id=m.id));
+end $$;
+revoke all on function public.scorer_readiness(uuid) from public,anon;
+grant execute on function public.scorer_readiness(uuid) to authenticated;
+commit;
+
+
+begin;
+
+create or replace function public.reset_auction(p_tournament uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_organiser(p_tournament) then raise exception 'Only the organiser can do this'; end if;
+  perform 1 from public.auction_state where tournament_id=p_tournament for update;
+  update public.players set status = 'available', team_id = null, sold_price = null
+   where tournament_id = p_tournament and status in ('sold', 'unsold');
+  update public.teams set spent = 0 where tournament_id = p_tournament;
+  delete from public.bids where tournament_id = p_tournament;
+  update public.auction_state
+     set player_id = null, current_bid = null, leading_team_id = null, phase = 'idle', ends_at = null,
+         next_player_id = null, updated_at = now()
+   where tournament_id = p_tournament;
+  update public.tournaments set status = 'setup' where id = p_tournament;
+end $$;
+
+create or replace function public.release_player(p_player uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  p public.players%rowtype;
+begin
+  select * into p from public.players where id = p_player;
+  if not found or not public.is_organiser(p.tournament_id) then raise exception 'Only the organiser can do this'; end if;
+  perform 1 from public.auction_state where tournament_id=p.tournament_id for update;
+  select * into p from public.players where id=p_player for update;
+  if not found or not public.is_organiser(p.tournament_id) then raise exception 'Only the organiser can do this'; end if;
+  if exists (select 1 from public.auction_state where player_id = p_player and phase = 'bidding') then
+    raise exception 'This player is being auctioned right now';
+  end if;
+  if p.status = 'sold' and p.team_id is not null then
+    update public.teams set spent = greatest(spent - coalesce(p.sold_price, 0), 0) where id = p.team_id;
+  end if;
+  update public.players set status = 'available', team_id = null, sold_price = null where id = p_player;
+end $$;
+
+create or replace function public.assign_player(p_player uuid, p_team uuid, p_price integer)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  p public.players%rowtype;
+  tm public.teams%rowtype;
+begin
+  select * into p from public.players where id = p_player;
+  if not found or not public.is_organiser(p.tournament_id) then raise exception 'Only the organiser can do this'; end if;
+  perform 1 from public.auction_state where tournament_id=p.tournament_id for update;
+  select * into p from public.players where id=p_player for update;
+  if not found or not public.is_organiser(p.tournament_id) then raise exception 'Only the organiser can do this'; end if;
+  if p.status = 'sold' then raise exception 'Release this player first'; end if;
+  if exists (select 1 from public.auction_state where player_id = p_player and phase = 'bidding') then
+    raise exception 'This player is being auctioned right now';
+  end if;
+  select * into tm from public.teams where id = p_team and tournament_id = p.tournament_id for update;
+  if not found then raise exception 'Team not found'; end if;
+  if (select count(*) from public.players where team_id=p_team and status='sold') >= (select max_squad from public.tournaments where id=p.tournament_id) then raise exception 'Squad is full'; end if;
+  if p_price < 0 or p_price > tm.purse - tm.spent then raise exception 'Team does not have enough purse'; end if;
+
+  update public.players set status = 'sold', team_id = p_team, sold_price = p_price where id = p_player;
+  update public.teams set spent = spent + p_price where id = p_team;
+end $$;
+
+create or replace function public.apply_bid(p_tournament uuid, p_team uuid, p_amount integer)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  st public.auction_state%rowtype;
+  t public.tournaments%rowtype;
+  tm public.teams%rowtype;
+  p public.players%rowtype;
+  v_min integer;
+  v_squad integer;
+  v_max integer;
+begin
+  if not public.tournament_active(p_tournament) then
+    raise exception 'This auction is paused by the site admin';
+  end if;
+
+  select * into st from public.auction_state where tournament_id = p_tournament for update;
+  if not found or st.phase <> 'bidding' or st.player_id is null then
+    raise exception 'Bidding is not open right now';
+  end if;
+  if st.ends_at is not null and clock_timestamp() >= st.ends_at then
+    raise exception 'Time is up for this player';
+  end if;
+
+  select * into tm from public.teams where id = p_team and tournament_id = p_tournament;
+  if not found then raise exception 'Team not found'; end if;
+  if st.leading_team_id = tm.id then raise exception 'You already have the highest bid'; end if;
+
+  select * into t from public.tournaments where id = p_tournament;
+  if t.status <> 'live' then raise exception 'Auction is not running'; end if;
+  select * into p from public.players where id = st.player_id;
+
+  v_min := case when st.current_bid is null then p.base_price
+                else st.current_bid + public.bid_step(t.increment_slabs, st.current_bid) end;
+  if p_amount < v_min then raise exception 'Minimum bid is Rs %', v_min; end if;
+
+  select count(*) into v_squad from public.players where team_id = tm.id and status = 'sold';
+  if v_squad >= t.max_squad then raise exception 'Squad is full (% players)', t.max_squad; end if;
+
+  -- keep enough money to fill the remaining minimum squad at base price
+  v_max := (tm.purse - tm.spent) - greatest(t.min_squad - v_squad - 1, 0) * t.base_price;
+  if p_amount > v_max then
+    raise exception 'Not enough purse. Max bid allowed is Rs %', greatest(v_max, 0);
+  end if;
+
+  update public.auction_state
+     set current_bid = p_amount,
+         leading_team_id = tm.id,
+         ends_at = case when t.bid_timer_seconds > 0 then clock_timestamp() + make_interval(secs => t.bid_timer_seconds) end,
+         updated_at = clock_timestamp()
+   where tournament_id = p_tournament;
+
+  insert into public.bids (tournament_id, player_id, team_id, amount)
+  values (p_tournament, st.player_id, tm.id, p_amount);
+
+  return jsonb_build_object('amount', p_amount, 'team_id', tm.id);
+end $$;
+
+create or replace function public.invalidate_match_rules() returns trigger
+language plpgsql security definer set search_path=public as $$
+begin
+  update public.matches set score_revision=score_revision+1 where tournament_id=new.id;
+  return null;
+end $$;
+drop trigger if exists invalidate_match_rules on public.tournaments;
+create trigger invalidate_match_rules after update of fixture_settings on public.tournaments
+  for each row when (new.fixture_settings is distinct from old.fixture_settings) execute function public.invalidate_match_rules();
+revoke all on function public.invalidate_match_rules() from public,anon,authenticated;
+commit;
+
+
+-- Apply AFTER the new client rollout and after old tabs have reloaded. See docs/LOCAL-REVIEW.md.
+begin;
+-- Base tables remain writable through existing policies, but full rows are private.
+drop policy if exists "tournaments readable" on public.tournaments;
+create policy "tournaments readable" on public.tournaments for select to authenticated
+  using(organiser_id = auth.uid() or public.is_admin());
+drop policy if exists "teams readable" on public.teams;
+create policy "teams readable" on public.teams for select to authenticated
+  using(owner_user_id = auth.uid() or public.is_organiser(tournament_id));
+
+commit;

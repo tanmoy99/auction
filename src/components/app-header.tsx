@@ -26,7 +26,7 @@ export function Logo({ dark }: { dark?: boolean }) {
       <LogoMark className="size-8" />
       <span className="text-lg font-extrabold tracking-tight">
         <span className={dark ? "text-white" : "text-slate-900"}>Cric</span>
-        <span className={dark ? "text-emerald-400" : "text-emerald-600"}>Mate</span>
+        <span className={dark ? "text-emerald-400" : "text-emerald-600"}>Mitra</span>
       </span>
     </Link>
   );

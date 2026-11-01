@@ -1,0 +1,34 @@
+import Link from "next/link";
+export default function Privacy() {
+  return (
+    <main className="mx-auto max-w-2xl space-y-5 px-4 py-10">
+      <h1 className="text-2xl font-bold">Privacy and support</h1>
+      <p>
+        CricMitra stores tournament registrations, player profiles and photos, team information, bids, fixtures and scoring records in
+        Supabase. Hosting is provided through Vercel.
+      </p>
+      <p>
+        Approved player profiles, photos, squads, scores and statistics are visible on public tournament pages. Phone numbers are stored
+        separately for the organiser. Registration links can be used by anyone who receives them; share them only where you intend to accept
+        registrations.
+      </p>
+      <p>
+        Pending scoring actions are saved in the scorer’s browser so they can be recovered after a connection failure. Export or resolve
+        pending actions before clearing browser data. Audit history records important tournament changes; it does not include passwords or
+        scorer PINs.
+      </p>
+      <p>
+        For registration corrections, photo removal, team login recovery or tournament questions, contact the organiser who provided your
+        tournament link. For account access issues, use the site administrator contact already provided to you. This application does not
+        currently publish a dedicated support email.
+      </p>
+      <p>
+        Organisers can manage and delete tournament records. No automatic retention period is promised here. Public links and images can be
+        copied by viewers.
+      </p>
+      <Link className="text-emerald-700 underline" href="/">
+        Back to CricMitra
+      </Link>
+    </main>
+  );
+}

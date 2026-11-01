@@ -5,9 +5,13 @@
 //   npm run test:auction
 import { createClient } from "@supabase/supabase-js";
 
-const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (process.env.CRICMATE_TEST_DATABASE !== "dedicated" || !process.env.TEST_SUPABASE_URL || process.env.TEST_SUPABASE_URL === process.env.NEXT_PUBLIC_SUPABASE_URL) {
+  console.error("Blocked: set CRICMATE_TEST_DATABASE=dedicated and distinct TEST_SUPABASE_URL, TEST_SUPABASE_ANON_KEY, TEST_SUPABASE_SERVICE_ROLE_KEY. Never use production.");
+  process.exit(2);
+}
+const URL = process.env.TEST_SUPABASE_URL;
+const ANON = process.env.TEST_SUPABASE_ANON_KEY;
+const SERVICE = process.env.TEST_SUPABASE_SERVICE_ROLE_KEY;
 const APP = process.env.APP_URL ?? "http://localhost:3000";
 if (!URL || !ANON || !SERVICE) {
   console.error("Missing Supabase keys in .env.local (all 3 are needed)");
@@ -64,7 +68,7 @@ async function makeUser(label, role) {
 }
 
 async function main() {
-  console.log(`\nCricMate scenario tests (run ${RUN})\n`);
+  console.log(`\nCricMitra scenario tests (run ${RUN})\n`);
   const org = await makeUser("organiser", "organiser");
   const other = await makeUser("other-organiser", "organiser");
   const owners = {};
@@ -768,13 +772,14 @@ async function main() {
           assert(p.status === "sold" && p.team_id === J1.id && p.sold_price === 0 && p.source === "team-link" && p.role === "Bowler", JSON.stringify(p));
           assert((await team(J1.id)).spent === 0, "purse was charged");
           const c = await ok(admin.from("player_contacts").select("phone").eq("player_id", p.id).single());
-          assert(c.phone === "+91 90000 11111", "phone not saved");
+          assert(c.phone === "+919000011111", `phone not saved in the standard +91 format: ${c.phone}`);
         });
         await test("join link needs a mobile number, and the same number can't join twice", async () => {
           const a = await join(form("No Phone"));
           assert(a.status === 400, `got ${a.status}`);
           const b = await join(form("Again", "9000011111"));
-          assert(b.status === 400 && /already registered/i.test((await b.json()).error), `got ${b.status}`);
+          const dup = await b.json();
+          assert(b.status === 409 && /already registered/i.test(dup.error), `got ${b.status}: ${dup.error}`);
         });
         await test("signed-in owner can add a player without a phone", async () => {
           const res = await join(form("Owner Pick"), { Authorization: `Bearer ${ownerToken}` });

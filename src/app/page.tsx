@@ -124,7 +124,7 @@ export default function Home() {
                 </div>
               </div>
             </div>
-            <AuctionDemo />
+            <div><p className="mb-2 text-center text-sm font-semibold text-emerald-700">Interactive demo</p><AuctionDemo /></div>
           </div>
         </section>
 
@@ -186,7 +186,7 @@ export default function Home() {
               </ul>
             </Reveal>
             <Reveal delay={120}>
-              <ScoringDemo />
+              <div><p className="mb-2 text-sm font-semibold text-emerald-700">Interactive demo</p><ScoringDemo /></div>
             </Reveal>
           </div>
         </section>
@@ -195,7 +195,7 @@ export default function Home() {
         <section className="bg-slate-50">
           <div className="mx-auto grid max-w-6xl items-center gap-14 px-4 py-20 sm:py-24 lg:grid-cols-2">
             <Reveal delay={120} className="order-2 lg:order-1">
-              <TableDemo />
+              <div><p className="mb-2 text-sm font-semibold text-emerald-700">Interactive demo</p><TableDemo /></div>
             </Reveal>
             <Reveal className="order-1 lg:order-2">
               <p className="text-sm font-semibold uppercase tracking-widest text-amber-600">Fixtures & points table</p>
@@ -286,7 +286,9 @@ export default function Home() {
           <p>
             © {APP_NAME} · Player auctions, fixtures & live scoring for local cricket
           </p>
-          <div className="flex gap-4">
+          <div className="flex flex-wrap justify-center gap-4">
+            <Link href="/privacy" className="hover:text-slate-800">Privacy and support</Link>
+            <Link href="/demo" className="hover:text-slate-800">Explore demo tournament</Link>
             <Link href="/signup" className="hover:text-slate-800">
               Organiser sign up
             </Link>

@@ -50,6 +50,7 @@ export default function LoginPage() {
           Log in
         </Button>
       </form>
+      <Link href="/forgot-password" className="mt-4 block text-sm text-emerald-700 hover:underline">Forgot your password?</Link>
     </AuthCard>
   );
 }

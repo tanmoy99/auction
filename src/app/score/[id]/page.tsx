@@ -1,5 +1,6 @@
 "use client";
 
+import { ResourceError } from "@/components/resource-error";
 import { useCallback, useState } from "react";
 import { useParams } from "next/navigation";
 import { ExternalLink, KeyRound, Menu, Wifi, WifiOff } from "lucide-react";
@@ -22,9 +23,11 @@ export default function ScorePage() {
   const live = useMatchLive(id);
   const { user, loading: userLoading } = useUser();
   const [access, setAccess] = useState<Access | null>(null);
+  const [accessFor, setAccessFor] = useState<string | null>(null);
   const [lost, setLost] = useState<string | null>(null);
 
   if (live.loading || userLoading) return <PageLoader />;
+  if (live.error) return <ResourceError message={live.error} retry={live.reload} />;
   if (!live.match || !live.tournament) return <EmptyState icon={<KeyRound className="size-6" />} title="Match not found" />;
   if (!live.match.team_a_id || !live.match.team_b_id)
     return (
@@ -33,21 +36,25 @@ export default function ScorePage() {
       </main>
     );
 
-  if (!access || lost)
+  if (!access || accessFor !== id || lost)
     return (
       <PinGate
+        key={id}
         matchId={id}
         title={`${live.teams.find((t) => t.id === live.match!.team_a_id)?.name} v ${live.teams.find((t) => t.id === live.match!.team_b_id)?.name}`}
         signedIn={!!user}
         lost={lost}
-        onAccess={(a) => {
+        onAccess={async (a) => {
+          // claiming / taking over changes the score revision: load it before the first tap
+          await live.reload();
           setLost(null);
           setAccess(a);
+          setAccessFor(id);
         }}
       />
     );
 
-  return <Scorer live={live} access={access} onLost={setLost} />;
+  return <Scorer key={id} live={live} access={access} />;
 }
 
 // The WhatsApp link carries the PIN after # so it never reaches server logs.
@@ -58,7 +65,19 @@ function pinFromLink() {
   return /^\d{4}$/.test(pin) ? pin : "";
 }
 
-function PinGate({ matchId, title, signedIn, lost, onAccess }: { matchId: string; title: string; signedIn: boolean; lost: string | null; onAccess: (a: Access) => void }) {
+function PinGate({
+  matchId,
+  title,
+  signedIn,
+  lost,
+  onAccess,
+}: {
+  matchId: string;
+  title: string;
+  signedIn: boolean;
+  lost: string | null;
+  onAccess: (a: Access) => Promise<void>;
+}) {
   const [pin, setPin] = useState(pinFromLink);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -69,12 +88,16 @@ function PinGate({ matchId, title, signedIn, lost, onAccess }: { matchId: string
       setBusy(true);
       const device = deviceId();
       const { data, error } = await supabase.rpc("scorer_claim", { p_match: matchId, p_pin: usePin, p_device: device, p_name: name, p_force: force });
-      setBusy(false);
-      if (error) return toast(errorMessage(error), "error");
+      if (error) {
+        setBusy(false);
+        return toast(errorMessage(error), "error");
+      }
       const res = data as { status: string; device_name?: string };
+      if (res.status !== "ok") setBusy(false);
       if (res.status === "wrong_pin") return toast("Wrong PIN", "error");
       if (res.status === "taken") return setTaken(res.device_name ?? "another phone");
-      onAccess({ pin: usePin, device });
+      await onAccess({ pin: usePin, device });
+      setBusy(false);
     },
     [matchId, name, onAccess],
   );
@@ -134,12 +157,14 @@ function PinGate({ matchId, title, signedIn, lost, onAccess }: { matchId: string
   );
 }
 
-function Scorer({ live, access, onLost }: { live: ReturnType<typeof useMatchLive>; access: Access; onLost: (m: string) => void }) {
+function Scorer({ live, access }: { live: ReturnType<typeof useMatchLive>; access: Access }) {
   const match = live.match!;
   const tournament = live.tournament!;
   const settings = tournament.fixture_settings ?? DEFAULT_SETTINGS;
-  const board = useScoreboard(tournament, live.teams, live.players, live.events, match);
-  const { send, undo, call } = useScoringActions(match.id, access, board, live.events, live.setEvents, live.reload, onLost);
+  const serverBoard = useScoreboard(tournament, live.teams, live.players, live.events, match);
+  const actions = useScoringActions(match.id, access, serverBoard, live.events, match.score_revision ?? 0, live.reload);
+  const { send, undo, call } = actions;
+  const board = useScoreboard(tournament, live.teams, live.players, actions.events, match);
   const [menu, setMenu] = useState(false);
   const [editXi, setEditXi] = useState(false);
   const [retire, setRetire] = useState(false);
@@ -180,7 +205,7 @@ function Scorer({ live, access, onLost }: { live: ReturnType<typeof useMatchLive
     body = (
       <div className="space-y-3">
         <FinishPanel match={match} board={board} settings={settings} call={call} />
-        <Button variant="secondary" className="w-full" onClick={undo} disabled={!live.events.length}>
+        <Button variant="secondary" className="w-full" onClick={undo} disabled={!actions.events.length}>
           Undo last action
         </Button>
       </div>
@@ -193,9 +218,9 @@ function Scorer({ live, access, onLost }: { live: ReturnType<typeof useMatchLive
         </Card>
         {state.next === "new_batter" && <PickPanel kind="batter" board={board} send={send} />}
         {state.next === "new_bowler" && <PickPanel kind="bowler" board={board} send={send} />}
-        {state.next === "ball" && <ScoringPad board={board} send={send} undo={undo} canUndo={live.events.length > 0} />}
+        {state.next === "ball" && <ScoringPad board={board} send={send} undo={undo} canUndo={actions.events.length > 0} />}
         {state.next !== "ball" && (
-          <Button variant="secondary" className="w-full" onClick={undo} disabled={!live.events.length}>
+          <Button variant="secondary" className="w-full" onClick={undo} disabled={!actions.events.length}>
             Undo last action
           </Button>
         )}
@@ -228,6 +253,15 @@ function Scorer({ live, access, onLost }: { live: ReturnType<typeof useMatchLive
       </header>
 
       <main className="mx-auto w-full max-w-xl flex-1 space-y-4 px-4 py-4">
+        <Card className="space-y-2 p-3">
+          <p role="status" className="text-sm font-semibold">{actions.status} · {actions.pending} unsaved actions</p>
+          {(actions.error || live.error) && <p role="alert" className="text-sm text-amber-800">{actions.error || live.error}</p>}
+          {(actions.pending > 0 || actions.error) && <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={actions.retry}>Retry safely</Button>
+            <Button size="sm" variant="secondary" onClick={actions.exportPending}>Export pending actions</Button>
+            <Button size="sm" variant="ghost" onClick={actions.discard}>Review and discard</Button>
+          </div>}
+        </Card>
         {body}
         {started && match.status !== "completed" && !editXi && <FullScorecard board={board} />}
       </main>

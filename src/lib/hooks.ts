@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { RealtimePostgresChangesPayload, User } from "@supabase/supabase-js";
+import type { User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 import type { Match } from "./fixtures";
 import type { MatchEvent, PlayerMatchStats } from "./scoring";
@@ -83,16 +83,6 @@ export function useCountdown(endsAt: string | null, offset: number) {
   return Math.max(0, (new Date(endsAt).getTime() - (now + offset)) / 1000);
 }
 
-function applyChange<T extends { id: string }>(rows: T[], payload: RealtimePostgresChangesPayload<T>) {
-  if (payload.eventType === "DELETE") return rows.filter((r) => r.id !== (payload.old as Partial<T>).id);
-  const row = payload.new as T;
-  const i = rows.findIndex((r) => r.id === row.id);
-  if (i === -1) return [...rows, row];
-  const copy = rows.slice();
-  copy[i] = row;
-  return copy;
-}
-
 // Moves the auction along on time: when the timer runs out (sold / unsold) and, after the result
 // pause, the next player. Every open screen runs this; the server applies each step only once.
 export function useAuctionDriver(t: Tournament | null, state: AuctionState | null, offset: number) {
@@ -152,26 +142,41 @@ export function useTournamentLive(id: string | undefined) {
         .eq("tournament_id", id)
         .eq("player_id", playerId)
         .order("created_at", { ascending: false })
-        .limit(20);
+        .limit(20)
+        .abortSignal(AbortSignal.timeout(12000));
       if (currentPlayer.current === playerId) setBids((data as Bid[]) ?? []);
     },
     [id],
   );
 
+  const generation = useRef(0);
+  const inFlight = useRef(0);
+  const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     if (!id) return;
-    const [t, tm, p, s] = await Promise.all([
-      supabase.from("tournaments").select("*").eq("id", id).maybeSingle(),
-      supabase.from("teams").select("*").eq("tournament_id", id).order("created_at"),
-      supabase.from("players").select("*").eq("tournament_id", id).order("created_at"),
-      supabase.from("auction_state").select("*").eq("tournament_id", id).maybeSingle(),
-    ]);
-    setTournament((t.data as Tournament) ?? null);
-    setTeams((tm.data as Team[]) ?? []);
-    setPlayers((p.data as Player[]) ?? []);
-    setState((s.data as AuctionState) ?? null);
-    setLoading(false);
-    await loadBids((s.data as AuctionState | null)?.player_id ?? null);
+    const request = ++generation.current;
+    inFlight.current = request;
+    try {
+      const [t, tm, p, s] = await Promise.all([
+        supabase.from("tournament_display").select("*").eq("id", id).abortSignal(AbortSignal.timeout(12000)).maybeSingle(),
+        supabase.from("team_display").select("*").eq("tournament_id", id).order("created_at").abortSignal(AbortSignal.timeout(12000)),
+        supabase.from("players").select("*").eq("tournament_id", id).order("created_at").abortSignal(AbortSignal.timeout(12000)),
+        supabase.from("auction_state").select("*").eq("tournament_id", id).abortSignal(AbortSignal.timeout(12000)).maybeSingle(),
+      ]);
+      if (request !== generation.current) return;
+      const failed = [t, tm, p, s].some((result) => result.error);
+      setError(failed ? "Could not refresh tournament. Check your connection and retry." : null);
+      setLoading(false);
+      if (failed) return;
+      setTournament((t.data as Tournament) ?? null);
+      setTeams((tm.data as Team[]) ?? []);
+      setPlayers((p.data as Player[]) ?? []);
+      setState((s.data as AuctionState) ?? null);
+      setLoading(false);
+      await loadBids((s.data as AuctionState | null)?.player_id ?? null);
+    } finally {
+      if (inFlight.current === request) inFlight.current = 0;
+    }
   }, [id, loadBids]);
 
   useEffect(() => {
@@ -179,29 +184,22 @@ export function useTournamentLive(id: string | undefined) {
     const filter = `tournament_id=eq.${id}`;
     // Unique topic per mount: supabase.channel() hands back an existing channel with the same name,
     // and reusing one that is still being removed (React re-mounts) leaves it silently dead.
+    const initial = setTimeout(() => void load(), 0);
+    const epoch = generation;
+    const refresh = setInterval(() => {
+      if (document.visibilityState === "visible" && !inFlight.current) void load();
+    }, 10000);
+    const onOnline = () => {
+      void load();
+    };
+    window.addEventListener("online", onOnline);
     const channel = supabase
       .channel(`tournament-${id}-${crypto.randomUUID()}`)
-      .on<AuctionState>("postgres_changes", { event: "*", schema: "public", table: "auction_state", filter }, (payload) => {
-        if (payload.eventType === "DELETE") return;
-        const next = payload.new as AuctionState;
-        setState(next);
-        if (next.player_id !== currentPlayer.current) loadBids(next.player_id);
-      })
-      .on<Team>("postgres_changes", { event: "*", schema: "public", table: "teams", filter }, (payload) =>
-        setTeams((rows) => applyChange(rows, payload)),
-      )
-      .on<Player>("postgres_changes", { event: "*", schema: "public", table: "players", filter }, (payload) =>
-        setPlayers((rows) => applyChange(rows, payload)),
-      )
-      .on<Bid>("postgres_changes", { event: "INSERT", schema: "public", table: "bids", filter }, (payload) => {
-        const bid = payload.new as Bid;
-        if (bid.player_id === currentPlayer.current) setBids((rows) => [bid, ...rows].slice(0, 20));
-      })
-      .on<Tournament>(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "tournaments", filter: `id=eq.${id}` },
-        (payload) => setTournament(payload.new as Tournament),
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "auction_state", filter }, () => void load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "teams", filter }, () => void load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "players", filter }, () => void load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "bids", filter }, () => void load())
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "tournaments", filter: `id=eq.${id}` }, () => void load())
       .subscribe((status) => {
         setConnected(status === "SUBSCRIBED");
         // (re)load after every (re)connect so nothing is missed while a phone was asleep
@@ -212,6 +210,10 @@ export function useTournamentLive(id: string | undefined) {
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
+      ++epoch.current;
+      clearTimeout(initial);
+      clearInterval(refresh);
+      window.removeEventListener("online", onOnline);
       supabase.removeChannel(channel);
     };
   }, [id, load, loadBids]);
@@ -220,15 +222,32 @@ export function useTournamentLive(id: string | undefined) {
   // (flaky mobile data, phone screen lock). Cheap: one small row.
   useEffect(() => {
     if (!id) return;
-    const timer = setInterval(async () => {
-      if (document.visibilityState !== "visible") return;
-      const { data } = await supabase.from("auction_state").select("updated_at").eq("tournament_id", id).maybeSingle();
-      if (data && data.updated_at !== lastUpdate.current) load();
-    }, connected ? 8000 : 2500);
+    const timer = setInterval(
+      async () => {
+        if (document.visibilityState !== "visible") return;
+        const { data } = await supabase
+          .from("auction_state")
+          .select("updated_at")
+          .eq("tournament_id", id)
+          .abortSignal(AbortSignal.timeout(12000)).maybeSingle();
+        if (data && data.updated_at !== lastUpdate.current && !inFlight.current) load();
+      },
+      connected ? 8000 : 2500,
+    );
     return () => clearInterval(timer);
   }, [id, connected, load]);
 
-  return { tournament, teams, players, state, bids, loading, connected, reload: load };
+  return {
+    tournament,
+    teams,
+    players,
+    state,
+    bids,
+    loading: loading || (!!tournament && tournament.id !== id && !error),
+    connected,
+    error,
+    reload: load,
+  };
 }
 
 // All matches of a tournament, kept up to date live
@@ -236,19 +255,48 @@ export function useMatches(tournamentId: string | undefined) {
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const generation = useRef(0);
+  const inFlight = useRef(0);
+  const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     if (!tournamentId) return;
-    const { data } = await supabase.from("matches").select("*").eq("tournament_id", tournamentId).order("match_no");
-    setMatches((data as Match[]) ?? []);
-    setLoading(false);
+    const request = ++generation.current;
+    inFlight.current = request;
+    try {
+      const { data, error } = await supabase
+        .from("matches")
+        .select("*")
+        .eq("tournament_id", tournamentId)
+        .order("match_no")
+        .abortSignal(AbortSignal.timeout(12000));
+      if (request !== generation.current) return;
+      setError(error ? "Could not refresh fixtures. Retry when connected." : null);
+      setLoading(false);
+      if (error) return;
+      setMatches((data as Match[]) ?? []);
+      setLoading(false);
+    } finally {
+      if (inFlight.current === request) inFlight.current = 0;
+    }
   }, [tournamentId]);
 
   useEffect(() => {
     if (!tournamentId) return;
+    const initial = setTimeout(() => void load(), 0);
+    const epoch = generation;
+    const refresh = setInterval(() => {
+      if (document.visibilityState === "visible" && !inFlight.current) void load();
+    }, 10000);
+    const onOnline = () => {
+      void load();
+    };
+    window.addEventListener("online", onOnline);
     const channel = supabase
       .channel(`matches-${tournamentId}-${crypto.randomUUID()}`)
-      .on<Match>("postgres_changes", { event: "*", schema: "public", table: "matches", filter: `tournament_id=eq.${tournamentId}` }, (payload) =>
-        setMatches((rows) => applyChange(rows, payload).sort((a, b) => a.match_no - b.match_no)),
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "matches", filter: `tournament_id=eq.${tournamentId}` },
+        () => void load(),
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") load();
@@ -257,11 +305,15 @@ export function useMatches(tournamentId: string | undefined) {
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
+      ++epoch.current;
+      clearTimeout(initial);
+      clearInterval(refresh);
+      window.removeEventListener("online", onOnline);
       supabase.removeChannel(channel);
     };
   }, [tournamentId, load]);
 
-  return { matches, loading, reload: load };
+  return { matches, loading, error, reload: load };
 }
 
 export type MatchPlayer = {
@@ -300,50 +352,82 @@ export function useMatchLive(matchId: string | undefined) {
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
 
+  const generation = useRef(0);
+  const inFlight = useRef(0);
+  const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     if (!matchId) return;
-    const { data: m } = await supabase.from("matches").select("*").eq("id", matchId).maybeSingle();
-    if (!m) {
+    const request = ++generation.current;
+    inFlight.current = request;
+    try {
+      const { data: m, error: matchError } = await supabase
+        .from("matches")
+        .select("*")
+        .eq("id", matchId)
+        .abortSignal(AbortSignal.timeout(12000)).maybeSingle();
+      if (request !== generation.current) return;
+      setError(matchError ? "Could not refresh this match. Check your connection and retry." : null);
+      if (matchError) {
+        setLoading(false);
+        return;
+      }
+      if (!m) {
+        setMatch(null);
+        setLoading(false);
+        return;
+      }
+      const [t, tm, mp, ev, g] = await Promise.all([
+        supabase.from("tournament_display").select("*").eq("id", m.tournament_id).abortSignal(AbortSignal.timeout(12000)).maybeSingle(),
+        supabase
+          .from("team_display")
+          .select("*")
+          .eq("tournament_id", m.tournament_id)
+          .order("created_at")
+          .abortSignal(AbortSignal.timeout(12000)),
+        supabase.from("match_players").select("*").eq("match_id", matchId).order("sort").abortSignal(AbortSignal.timeout(12000)),
+        supabase.from("match_events").select("*").eq("match_id", matchId).order("seq").abortSignal(AbortSignal.timeout(12000)),
+        supabase
+          .from("guest_players")
+          .select("*")
+          .eq("tournament_id", m.tournament_id)
+          .in("team_id", [m.team_a_id, m.team_b_id].filter(Boolean))
+          .abortSignal(AbortSignal.timeout(12000)),
+      ]);
+      if (request !== generation.current) return;
+      const failed = [t, tm, mp, ev, g].some((result) => result.error);
+      setError(failed ? "Could not refresh all match data. Retry when connected." : null);
       setLoading(false);
-      return;
+      if (failed) return;
+      setMatch(m as Match);
+      setTournament((t.data as Tournament) ?? null);
+      setTeams((tm.data as Team[]) ?? []);
+      setPlayers((mp.data as MatchPlayer[]) ?? []);
+      setEvents((ev.data as MatchEvent[]) ?? []);
+      setGuests((g.data as GuestPlayer[]) ?? []);
+      setLoading(false);
+    } finally {
+      if (inFlight.current === request) inFlight.current = 0;
     }
-    const [t, tm, mp, ev, g] = await Promise.all([
-      supabase.from("tournaments").select("*").eq("id", m.tournament_id).maybeSingle(),
-      supabase.from("teams").select("*").eq("tournament_id", m.tournament_id).order("created_at"),
-      supabase.from("match_players").select("*").eq("match_id", matchId).order("sort"),
-      supabase.from("match_events").select("*").eq("match_id", matchId).order("seq"),
-      supabase.from("guest_players").select("*").eq("tournament_id", m.tournament_id).in("team_id", [m.team_a_id, m.team_b_id].filter(Boolean)),
-    ]);
-    setMatch(m as Match);
-    setTournament((t.data as Tournament) ?? null);
-    setTeams((tm.data as Team[]) ?? []);
-    setPlayers((mp.data as MatchPlayer[]) ?? []);
-    setEvents((ev.data as MatchEvent[]) ?? []);
-    setGuests((g.data as GuestPlayer[]) ?? []);
-    setLoading(false);
   }, [matchId]);
 
   useEffect(() => {
     if (!matchId) return;
     const byMatch = `match_id=eq.${matchId}`;
+    const initial = setTimeout(() => void load(), 0);
+    const epoch = generation;
+    const refresh = setInterval(() => {
+      if (document.visibilityState === "visible" && !inFlight.current) void load();
+    }, 10000);
+    const onOnline = () => {
+      void load();
+    };
+    window.addEventListener("online", onOnline);
     const channel = supabase
       .channel(`match-${matchId}-${crypto.randomUUID()}`)
-      .on<Match>("postgres_changes", { event: "UPDATE", schema: "public", table: "matches", filter: `id=eq.${matchId}` }, (p) => setMatch(p.new as Match))
-      .on<MatchEvent>("postgres_changes", { event: "*", schema: "public", table: "match_events", filter: byMatch }, (p) =>
-        setEvents((rows) => {
-          // the scorer adds its own event straight away; drop that copy when the saved one arrives
-          const seq = p.eventType === "INSERT" ? (p.new as MatchEvent).seq : null;
-          const base = seq == null ? rows : rows.filter((r) => r.seq !== seq);
-          return applyChange(base, p).sort((a, b) => a.seq - b.seq);
-        }),
-      )
-      .on<MatchPlayer>("postgres_changes", { event: "*", schema: "public", table: "match_players", filter: byMatch }, (p) =>
-        setPlayers((rows) => applyChange(rows, p).sort((a, b) => a.sort - b.sort)),
-      )
-      .on<GuestPlayer>("postgres_changes", { event: "*", schema: "public", table: "guest_players" }, (p) => {
-        // guests are filtered to this match's teams in the screens that use them
-        setGuests((rows) => applyChange(rows, p));
-      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "matches", filter: `id=eq.${matchId}` }, () => void load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "match_events", filter: byMatch }, () => void load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "match_players", filter: byMatch }, () => void load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "guest_players" }, () => void load())
       .subscribe((status) => {
         setConnected(status === "SUBSCRIBED");
         if (status === "SUBSCRIBED") load();
@@ -352,6 +436,10 @@ export function useMatchLive(matchId: string | undefined) {
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
+      ++epoch.current;
+      clearTimeout(initial);
+      clearInterval(refresh);
+      window.removeEventListener("online", onOnline);
       supabase.removeChannel(channel);
     };
   }, [matchId, load]);
@@ -360,36 +448,93 @@ export function useMatchLive(matchId: string | undefined) {
   const lastSeq = events.at(-1)?.seq ?? 0;
   useEffect(() => {
     if (!matchId) return;
-    const timer = setInterval(async () => {
-      if (document.visibilityState !== "visible") return;
-      const { data } = await supabase.from("match_events").select("seq").eq("match_id", matchId).order("seq", { ascending: false }).limit(1);
-      if ((data?.[0]?.seq ?? 0) !== lastSeq) load();
-    }, connected ? 8000 : 3000);
+    const timer = setInterval(
+      async () => {
+        if (document.visibilityState !== "visible") return;
+        const { data } = await supabase
+          .from("match_events")
+          .select("seq")
+          .eq("match_id", matchId)
+          .order("seq", { ascending: false })
+          .limit(1)
+          .abortSignal(AbortSignal.timeout(12000));
+        if ((data?.[0]?.seq ?? 0) !== lastSeq && !inFlight.current) load();
+      },
+      connected ? 8000 : 3000,
+    );
     return () => clearInterval(timer);
   }, [matchId, connected, lastSeq, load]);
 
-  return { match, tournament, teams, players, events, guests, loading, connected, reload: load, setEvents };
+  return {
+    match,
+    tournament,
+    teams,
+    players,
+    events,
+    guests,
+    loading: loading || (!!match && match.id !== matchId && !error),
+    connected,
+    error,
+    reload: load,
+    setEvents,
+  };
 }
 
 // Per-player numbers from every finished match of a tournament
 export function useTournamentStats(tournamentId: string | undefined) {
   const [rows, setRows] = useState<PlayerStatRow[]>([]);
+  const generation = useRef(0);
+  const inFlight = useRef(0);
   const load = useCallback(async () => {
     if (!tournamentId) return;
-    const { data } = await supabase.from("player_match_stats").select("*").eq("tournament_id", tournamentId);
-    setRows((data as PlayerStatRow[]) ?? []);
+    const request = ++generation.current;
+    inFlight.current = request;
+    try {
+      const { data, error } = await supabase
+        .from("player_match_stats")
+        .select("*")
+        .eq("tournament_id", tournamentId)
+        .abortSignal(AbortSignal.timeout(12000));
+      if (request !== generation.current || error) return;
+      setRows((data as PlayerStatRow[]) ?? []);
+    } finally {
+      if (inFlight.current === request) inFlight.current = 0;
+    }
   }, [tournamentId]);
   useEffect(() => {
     if (!tournamentId) return;
+    const initial = setTimeout(() => void load(), 0);
+    const epoch = generation;
+    const refresh = setInterval(() => {
+      if (document.visibilityState === "visible" && !inFlight.current) void load();
+    }, 10000);
+    const onOnline = () => {
+      void load();
+    };
+    window.addEventListener("online", onOnline);
     const channel = supabase
       .channel(`stats-${tournamentId}-${crypto.randomUUID()}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "player_match_stats", filter: `tournament_id=eq.${tournamentId}` }, () => load())
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "player_match_stats", filter: `tournament_id=eq.${tournamentId}` },
+        () => load(),
+      )
       .subscribe((status) => status === "SUBSCRIBED" && load());
     return () => {
+      ++epoch.current;
+      clearTimeout(initial);
+      clearInterval(refresh);
+      window.removeEventListener("online", onOnline);
       supabase.removeChannel(channel);
     };
   }, [tournamentId, load]);
   return rows;
 }
 
-export type PlayerStatRow = PlayerMatchStats & { match_id: string; tournament_id: string; player_id: string | null; guest_id: string | null; name: string };
+export type PlayerStatRow = PlayerMatchStats & {
+  match_id: string;
+  tournament_id: string;
+  player_id: string | null;
+  guest_id: string | null;
+  name: string;
+};

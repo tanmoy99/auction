@@ -1,5 +1,9 @@
 "use client";
 
+import { ResourceError } from "@/components/resource-error";
+import { Sponsors } from "@/components/sponsors";
+import { QrShare } from "@/components/qr-share";
+import { ResultShare } from "@/components/result-share";
 import { useParams } from "next/navigation";
 import { MonitorPlay, Trophy } from "lucide-react";
 import { Logo } from "@/components/app-header";
@@ -15,6 +19,7 @@ export default function MatchPage() {
   const board = useScoreboard(live.tournament, live.teams, live.players, live.events, live.match);
 
   if (live.loading) return <PageLoader />;
+  if (live.error) return <ResourceError message={live.error} retry={live.reload} />;
   if (!live.match || !live.tournament) return <EmptyState icon={<Trophy className="size-6" />} title="Match not found" />;
   const m = live.match;
   const a = board.team(m.team_a_id);
@@ -60,6 +65,9 @@ export default function MatchPage() {
         </p>
       </div>
 
+      <QrShare path={`/match/${m.id}`} />
+      {m.status === "completed" && <ResultShare matchId={m.id} players={live.players} />}
+      <Sponsors tournamentId={m.tournament_id} />
       {m.status === "live" && (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-600 px-3 py-1 text-xs font-bold text-white">
           <span className="size-1.5 animate-pulse rounded-full bg-white" /> LIVE

@@ -29,6 +29,7 @@ export type Source =
 export type Outcome = "win" | "tie" | "no_result" | "walkover" | "draw";
 
 export type Match = {
+  score_revision?: number;
   id: string;
   tournament_id: string;
   match_no: number;

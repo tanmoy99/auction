@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { imageUrl, initials } from "@/lib/format";
 import type { Player, PlayerStatus } from "@/lib/types";
@@ -164,32 +164,39 @@ export function Modal({
   children: React.ReactNode;
   wide?: boolean;
 }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  if (!open) return null;
+    const dialog = ref.current;
+    if (!open || !dialog) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    dialog.showModal();
+    document.body.style.overflow = "hidden";
+    return () => {
+      dialog.close();
+      document.body.style.overflow = overflow;
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [open]);
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 backdrop-blur-sm sm:items-center sm:p-4" onMouseDown={onClose}>
-      <div
-        className={cn(
-          "max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:rounded-2xl",
-          wide ? "sm:max-w-4xl" : "sm:max-w-lg",
-        )}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-5 py-4">
-          <h2 className="text-base font-semibold text-slate-900">{title}</h2>
-          <button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close">
-            <X className="size-5" />
-          </button>
-        </div>
-        <div className="p-5">{children}</div>
+    <dialog ref={ref} aria-labelledby={titleId} onCancel={e => { e.preventDefault(); onClose(); }}
+      onKeyDown={e => {
+        if (e.key !== "Tab") return;
+        const focusable = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')).filter(el => el.getClientRects().length);
+        const first = focusable[0], last = focusable.at(-1);
+        if (!first) { e.preventDefault(); return; }
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }}
+      className={cn("m-auto max-h-[92dvh] w-[calc(100%-2rem)] rounded-2xl border-0 bg-white p-0 shadow-xl backdrop:bg-slate-900/40 backdrop:backdrop-blur-sm", wide ? "max-w-4xl" : "max-w-lg")}
+      onClick={e => { if (e.target === e.currentTarget) { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) onClose(); } }}>
+      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-5 py-4">
+        <h2 id={titleId} className="text-base font-semibold text-slate-900">{title}</h2>
+        <button type="button" onClick={onClose} className="rounded-md p-3 text-slate-500 hover:bg-slate-100" aria-label="Close"><X className="size-5" /></button>
       </div>
-    </div>
+      <div className="p-5">{children}</div>
+    </dialog>
   );
 }
 
