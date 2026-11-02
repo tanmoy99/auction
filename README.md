@@ -6,7 +6,7 @@ Built for Indian local tournaments (bids start around ₹500), it works on phone
 
 **Local reliability update:** See [implementation, validation, migration order and rollback notes](docs/LOCAL-REVIEW.md). Existing projects must deploy the updated client before migration 018 restricts public base-table reads. No production migration or scheduler is enabled automatically.
 
-**Live demo:** https://auction-mu-sandy.vercel.app
+**Live:** https://cricmitra.com
 
 ---
 
