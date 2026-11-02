@@ -108,6 +108,8 @@ export type MatchEvent = { id: string; match_id: string; seq: number; type: Even
 export type BatterLine = { id: string; runs: number; balls: number; fours: number; sixes: number; out: boolean; how: string | null; retired: boolean };
 export type BowlerLine = { id: string; balls: number; runs: number; wickets: number; maidens: number; wides: number; noballs: number; dots: number };
 export type BallMark = { label: string; kind: "dot" | "run" | "four" | "six" | "extra" | "wicket" };
+// Auto commentary: one line per delivery, plus a summary at the end of each over
+export type CommentaryLine = { ball: string; kind: BallMark["kind"] | "over"; text: string; score: string };
 
 export type InningsState = {
   number: number;
@@ -122,6 +124,7 @@ export type InningsState = {
   fow: { wicket: number; runs: number; balls: number; player: string }[];
   overs: BallMark[][];
   over_stats: { runs: number; wickets: number }[]; // one per over, in step with overs (Manhattan and worm charts)
+  commentary: CommentaryLine[];
   striker: string | null;
   non_striker: string | null;
   bowler: string | null;
@@ -173,6 +176,7 @@ function emptyInnings(number: number, batting: string, bowling: string): Innings
     fow: [],
     overs: [],
     over_stats: [],
+    commentary: [],
     striker: null,
     non_striker: null,
     bowler: null,
@@ -268,6 +272,26 @@ function markFor(runs: number, extra: Extra | null, extraRuns: number, wicket: b
   if (runs === 4) return { label: "4", kind: "four" };
   if (runs === 6) return { label: "6", kind: "six" };
   return runs ? { label: String(runs), kind: "run" } : { label: "•", kind: "dot" };
+}
+
+// "FOUR!", "1 run", "wide", "OUT! c Amit b Rahul" ...
+function deliveryText(
+  e: Extract<EventData, { type: "ball" }>,
+  penalty: number,
+  out: BatterLine | null,
+  nameOf: (id: string) => string,
+) {
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  let text: string;
+  if (e.extra === "wd") text = e.extra_runs ? `wide, ${plural(e.extra_runs + penalty, "run")}` : "wide";
+  else if (e.extra === "nb")
+    text = e.runs === 6 ? "no ball, SIX!" : e.runs === 4 ? "no ball, FOUR!" : e.runs ? `no ball, ${plural(e.runs, "run")}` : e.extra_runs ? `no ball, ${plural(e.extra_runs, "bye")}` : "no ball";
+  else if (e.extra === "b") text = plural(e.extra_runs, "bye");
+  else if (e.extra === "lb") text = plural(e.extra_runs, "leg bye");
+  else text = e.runs === 6 ? "SIX!" : e.runs === 4 ? "FOUR!" : e.runs ? plural(e.runs, "run") : "no run";
+  if (!out) return text;
+  const runs = e.runs + e.extra_runs;
+  return `OUT! ${nameOf(out.id)} ${out.how ?? ""} ${out.runs} (${out.balls})${runs ? ` · ${text}` : ""}`.replace(/\s+/g, " ").trim();
 }
 
 export type Lineups = Record<string, string[]>; // team id -> playing XI (match player ids)
@@ -412,6 +436,7 @@ export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: Scorin
     const striker = batter(inn, inn.striker);
     const bowl = bowlerLine(inn, inn.bowler);
     const wasFreeHit = inn.free_hit;
+    const ballNo = `${Math.floor(inn.legal_balls / 6)}.${(inn.legal_balls % 6) + 1}`;
 
     inn.runs += total;
     inn.partnership.runs += total;
@@ -481,11 +506,25 @@ export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: Scorin
       else if (inn.non_striker === wicket.out) inn.non_striker = null;
     }
 
+    inn.commentary.push({
+      ball: ballNo,
+      kind: inn.overs.at(-1)!.at(-1)!.kind,
+      text: `${nameOf(bowl.id)} to ${nameOf(striker.id)}, ${deliveryText(e, penalty, wicket ? batter(inn, wicket.out) : null, nameOf)}${wasFreeHit ? " (free hit)" : ""}`,
+      score: `${inn.runs}/${inn.wickets}`,
+    });
+
     // free hit follows a no-ball and lasts until the next legal delivery
     if (e.extra === "nb" && rules.free_hit) inn.free_hit = true;
     else if (legal) inn.free_hit = false;
 
     if (legal && inn.legal_balls % 6 === 0) {
+      const o = inn.over_stats.at(-1)!;
+      inn.commentary.push({
+        ball: String(inn.legal_balls / 6),
+        kind: "over",
+        text: `End of over ${inn.legal_balls / 6}: ${o.runs} run${o.runs === 1 ? "" : "s"}${o.wickets ? `, ${o.wickets} wicket${o.wickets === 1 ? "" : "s"}` : ""}${overRuns === 0 && inn.overs.at(-1)!.length > 0 ? " (maiden)" : ""}`,
+        score: `${inn.runs}/${inn.wickets}`,
+      });
       if (overRuns === 0 && inn.overs.at(-1)!.length > 0) bowl.maidens++;
       inn.last_over_bowler = bowl.id;
       inn.bowler = null;

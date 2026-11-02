@@ -11,6 +11,7 @@ import { matchDay, matchTime } from "@/components/fixtures";
 import { FullScorecard, LiveSummary, breakText, useScoreboard } from "@/components/scorecard";
 import { MatchCharts } from "@/components/match-charts";
 import { PlayerOfTheMatch } from "@/components/match-awards";
+import { Commentary } from "@/components/commentary";
 import { Button, Card, EmptyState, PageLoader, TeamDot } from "@/components/ui";
 import { useMatchLive } from "@/lib/hooks";
 
@@ -95,6 +96,7 @@ export default function MatchPage() {
           <LiveSummary board={board} />
         </Card>
       )}
+      {m.status !== "completed" && <Commentary board={board} initial={8} />}
       {state.next === "innings_break" && (
         <Card className="p-4 text-center text-sm font-medium text-slate-700">
           Innings break · {breakText(board)}
@@ -105,6 +107,7 @@ export default function MatchPage() {
         <>
           <FullScorecard board={board} />
           <MatchCharts board={board} />
+          {m.status === "completed" && <Commentary board={board} />}
         </>
       ) : m.status === "completed" ? null : (
         <EmptyState icon={<Trophy className="size-6" />} title="Not started yet" text="The live score will appear here ball by ball once the match starts." />

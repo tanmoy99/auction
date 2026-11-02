@@ -415,5 +415,37 @@ test("Player of the Match: highest points, ties go to the winning side", () => {
   assert(MVP.performanceText(ranked[0]) === "16 (3)", MVP.performanceText(ranked[0]));
 });
 
+console.log("\nCommentary");
+
+test("one line per delivery with the ball number, bowler and batter", () => {
+  const m = match().toss().start();
+  m.ball(4).ball(0, "wd").ball(1).ball(6).ball(0);
+  const c = cur(m).commentary;
+  assert(c.length === 5, `${c.length}`);
+  assert(c[0].ball === "0.1" && c[0].text === "b1 to a1, FOUR!" && c[0].kind === "four", JSON.stringify(c[0]));
+  assert(c[1].ball === "0.2" && c[1].text === "b1 to a1, wide" && c[1].kind === "extra", JSON.stringify(c[1]));
+  assert(c[2].ball === "0.2" && c[2].text === "b1 to a1, 1 run", JSON.stringify(c[2]));
+  assert(c[3].text === "b1 to a2, SIX!" && c[4].text === "b1 to a2, no run", JSON.stringify(c.slice(3)));
+  assert(c[4].score === "12/0", c[4].score);
+});
+
+test("wickets read like a scorecard line, and the over ends with a summary", () => {
+  const m = match().toss().start();
+  m.ball(1).ball(0).out("caught", "a2", "b3").batter("a3").ball(0).ball(0).ball(2, "lb");
+  const c = cur(m).commentary;
+  assert(c[2].kind === "wicket" && c[2].text === "b1 to a2, OUT! a2 c b3 b b1 0 (2)", c[2].text);
+  const end = c.at(-1);
+  assert(end.kind === "over" && end.text === "End of over 1: 3 runs, 1 wicket" && end.score === "3/1", JSON.stringify(end));
+});
+
+test("free hit and maiden are called out", () => {
+  const m = match().toss().start();
+  m.ball(0, "nb").ball(0);
+  assert(cur(m).commentary[1].text.endsWith("(free hit)"), cur(m).commentary[1].text);
+  const m2 = match().toss().start();
+  for (let i = 0; i < 6; i++) m2.ball(0);
+  assert(cur(m2).commentary.at(-1).text === "End of over 1: 0 runs (maiden)", cur(m2).commentary.at(-1).text);
+});
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);
