@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, Mail, MessageCircle, Phone } from "lucide-react";
+import { ArrowRight, Mail, MessageCircle } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
 import { APP_NAME, CONTACT, SITE_URL } from "@/lib/config";
 
@@ -18,6 +18,7 @@ const orgData = {
   name: APP_NAME,
   url: SITE_URL,
   email: CONTACT.email,
+  employee: CONTACT.team.map((m) => ({ "@type": "Person", name: m.name, jobTitle: m.role })),
   contactPoint: [{ "@type": "ContactPoint", contactType: "customer support", telephone: CONTACT.whatsapp.replace(/\s/g, ""), email: CONTACT.email, availableLanguage: ["English", "Hindi", "Bengali"] }],
 };
 
@@ -50,36 +51,44 @@ export default function Contact() {
             <h2 className="mt-4 font-bold text-slate-900">WhatsApp</h2>
             <p className="mt-1 text-lg font-semibold text-emerald-700">{CONTACT.whatsapp}</p>
             <p className="mt-2 inline-flex items-center gap-1 text-sm text-slate-600">
-              Chat with us <ArrowRight className="size-4 transition group-hover:translate-x-1" />
+              Chat or call us <ArrowRight className="size-4 transition group-hover:translate-x-1" />
             </p>
           </a>
-          <a
-            href={`mailto:${CONTACT.email}?subject=${encodeURIComponent(`${APP_NAME} enquiry`)}`}
-            className="group rounded-2xl border border-slate-200 bg-white p-6 transition hover:border-emerald-300 hover:shadow-md"
-          >
+          <div className="rounded-2xl border border-slate-200 bg-white p-6">
             <span className="inline-flex rounded-xl bg-slate-900 p-2.5 text-white">
               <Mail className="size-5" />
             </span>
             <h2 className="mt-4 font-bold text-slate-900">Email</h2>
-            <p className="mt-1 break-all text-lg font-semibold text-slate-800">{CONTACT.email}</p>
-            <p className="mt-2 inline-flex items-center gap-1 text-sm text-slate-600">
-              Send an email <ArrowRight className="size-4 transition group-hover:translate-x-1" />
-            </p>
-          </a>
-          <a
-            href={`tel:${CONTACT.whatsapp.replace(/\s/g, "")}`}
-            className="group rounded-2xl border border-slate-200 bg-white p-6 transition hover:border-emerald-300 hover:shadow-md sm:col-span-2"
-          >
-            <div className="flex items-center gap-4">
-              <span className="inline-flex rounded-xl bg-slate-900 p-2.5 text-white">
-                <Phone className="size-5" />
-              </span>
-              <div>
-                <h2 className="font-bold text-slate-900">{CONTACT.name}</h2>
-                <p className="text-sm text-slate-600">{APP_NAME} support · Call {CONTACT.whatsapp}</p>
-              </div>
-            </div>
-          </a>
+            <a href={`mailto:${CONTACT.email}?subject=${encodeURIComponent(`${APP_NAME} support`)}`} className="mt-2 block group">
+              <span className="block break-all text-lg font-semibold text-slate-800 group-hover:text-emerald-700">{CONTACT.email}</span>
+              <span className="text-sm text-slate-500">Help with your tournament</span>
+            </a>
+            <a href={`mailto:${CONTACT.generalEmail}?subject=${encodeURIComponent(`${APP_NAME} enquiry`)}`} className="mt-3 block group">
+              <span className="block break-all text-lg font-semibold text-slate-800 group-hover:text-emerald-700">{CONTACT.generalEmail}</span>
+              <span className="text-sm text-slate-500">General and business enquiries</span>
+            </a>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:col-span-2">
+            <h2 className="font-bold text-slate-900">Our team</h2>
+            <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+              {CONTACT.team.map((m) => (
+                <li key={m.name} className="flex items-center gap-3">
+                  <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 font-bold text-emerald-700">
+                    {m.name
+                      .split(" ")
+                      .map((w) => w[0])
+                      .join("")}
+                  </span>
+                  <span>
+                    <span className="block font-semibold text-slate-900">{m.name}</span>
+                    <span className="text-sm text-slate-500">
+                      {m.role}, {APP_NAME}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
         </section>
 
         <section className="mx-auto max-w-3xl px-4 pb-14">
