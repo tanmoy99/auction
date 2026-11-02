@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { SiteFooter } from "@/components/site-footer";
 import { GUIDES } from "./guide-shell";
 
 export const metadata: Metadata = {
@@ -38,6 +39,7 @@ export default function Guides() {
           ))}
         </section>
       </main>
+      <SiteFooter />
     </>
   );
 }

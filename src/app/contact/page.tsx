@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, Mail, MessageCircle } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { SiteFooter } from "@/components/site-footer";
 import { APP_NAME, CONTACT, SITE_URL } from "@/lib/config";
 
 export const metadata: Metadata = {
@@ -113,6 +114,7 @@ export default function Contact() {
           </div>
         </section>
       </main>
+      <SiteFooter />
     </>
   );
 }

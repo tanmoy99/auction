@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { SiteFooter } from "@/components/site-footer";
 import { APP_NAME } from "@/lib/config";
 
 export type Faq = { q: string; a: string };
@@ -99,6 +100,7 @@ export function GuideShell({
           </ul>
         </nav>
       </main>
+      <SiteFooter />
     </>
   );
 }
