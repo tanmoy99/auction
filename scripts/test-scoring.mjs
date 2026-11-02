@@ -1,6 +1,7 @@
 // Checks of the ball-by-ball scoring engine (no database needed):  npm run test:scoring
 import { decideResult } from "../src/lib/fixtures.ts";
 import * as S from "../src/lib/scoring.ts";
+import * as MVP from "../src/lib/mvp.ts";
 
 let passed = 0;
 let failed = 0;
@@ -365,6 +366,53 @@ test("limited-overs stats keep one row per player", () => {
   m.ball(4).ball(1);
   const stats = S.matchStats(m.state(), m.lineups);
   assert(stats.length === 22 && stats.every((x) => x.innings === 1), `${stats.length}`);
+});
+
+console.log("\nCharts and Player of the Match");
+
+test("over_stats tracks runs (extras included) and wickets per over, in step with overs", () => {
+  const m = match().toss().start();
+  m.ball(4).ball(0, "wd").ball(1).ball(6).out("bowled", "a2").batter("a3").ball(0).ball(2);
+  const inn = cur(m);
+  assert(inn.over_stats.length === inn.overs.length, `${inn.over_stats.length} vs ${inn.overs.length}`);
+  assert(inn.over_stats[0].runs === 14 && inn.over_stats[0].wickets === 1, JSON.stringify(inn.over_stats[0]));
+  m.bowler("b2").ball(1);
+  assert(cur(m).over_stats[1].runs === 1 && cur(m).over_stats[1].wickets === 0, JSON.stringify(cur(m).over_stats));
+  const sum = cur(m).over_stats.reduce((t, o) => t + o.runs, 0);
+  assert(sum === cur(m).runs, `${sum} vs ${cur(m).runs}`);
+});
+
+test("retired out counts as a wicket in the over", () => {
+  const m = match().toss().start();
+  m.ball(1).retire("a2", true);
+  assert(cur(m).over_stats[0].wickets === 1, JSON.stringify(cur(m).over_stats));
+});
+
+test("MVP points: runs, boundaries, milestones, wickets, hauls, maidens, fielding", () => {
+  const blank = { bat_runs: 0, bat_balls: 0, fours: 0, sixes: 0, did_bat: false, bowl_balls: 0, bowl_runs: 0, wickets: 0, maidens: 0, catches: 0, stumpings: 0, run_outs: 0 };
+  assert(MVP.performancePoints({ ...blank, bat_runs: 54, fours: 5, sixes: 2 }).total === 54 + 5 + 4 + 10, "fifty");
+  assert(MVP.performancePoints({ ...blank, bat_runs: 100 }).total === 130, "hundred");
+  assert(MVP.performancePoints({ ...blank, wickets: 3, maidens: 1 }).total === 60 + 10 + 10, "three-for");
+  assert(MVP.performancePoints({ ...blank, wickets: 5 }).total === 100 + 30, "five-for");
+  assert(MVP.performancePoints({ ...blank, catches: 2, stumpings: 1, run_outs: 1 }).total === 16 + 10 + 10, "fielding");
+});
+
+test("Player of the Match: highest points, ties go to the winning side", () => {
+  const m = match().toss().start();
+  m.ball(6).ball(6).ball(4);
+  const lines = S.matchStats(m.state(), m.lineups);
+  const ranked = MVP.rankMatch(lines, (l) => l.match_player_id, "B");
+  assert(ranked[0].id === "a1" && ranked[0].points === 16 + 2 + 2 + 1, JSON.stringify(ranked[0]));
+  const tie = MVP.rankMatch(
+    [
+      { ...lines[0], match_player_id: "x", team_id: "A", bat_runs: 10, fours: 0, sixes: 0 },
+      { ...lines[0], match_player_id: "y", team_id: "B", bat_runs: 10, fours: 0, sixes: 0 },
+    ],
+    (l) => l.match_player_id,
+    "B",
+  );
+  assert(tie[0].id === "y", JSON.stringify(tie));
+  assert(MVP.performanceText(ranked[0]) === "16 (3)", MVP.performanceText(ranked[0]));
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

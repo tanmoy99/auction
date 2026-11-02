@@ -9,6 +9,8 @@ import { MonitorPlay, Trophy } from "lucide-react";
 import { Logo } from "@/components/app-header";
 import { matchDay, matchTime } from "@/components/fixtures";
 import { FullScorecard, LiveSummary, breakText, useScoreboard } from "@/components/scorecard";
+import { MatchCharts } from "@/components/match-charts";
+import { PlayerOfTheMatch } from "@/components/match-awards";
 import { Button, Card, EmptyState, PageLoader, TeamDot } from "@/components/ui";
 import { useMatchLive } from "@/lib/hooks";
 
@@ -80,6 +82,7 @@ export default function MatchPage() {
           <p className="font-semibold">{m.result_text}</p>
         </div>
       )}
+      {m.status === "completed" && state.innings.length > 0 && <PlayerOfTheMatch board={board} winner={m.winner_team_id} />}
 
       {state.toss && (
         <p className="text-sm text-slate-600">
@@ -99,7 +102,10 @@ export default function MatchPage() {
       )}
 
       {state.innings.length > 0 ? (
-        <FullScorecard board={board} />
+        <>
+          <FullScorecard board={board} />
+          <MatchCharts board={board} />
+        </>
       ) : m.status === "completed" ? null : (
         <EmptyState icon={<Trophy className="size-6" />} title="Not started yet" text="The live score will appear here ball by ball once the match starts." />
       )}

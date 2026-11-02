@@ -121,6 +121,7 @@ export type InningsState = {
   bowlers: BowlerLine[]; // in order they first bowled
   fow: { wicket: number; runs: number; balls: number; player: string }[];
   overs: BallMark[][];
+  over_stats: { runs: number; wickets: number }[]; // one per over, in step with overs (Manhattan and worm charts)
   striker: string | null;
   non_striker: string | null;
   bowler: string | null;
@@ -171,6 +172,7 @@ function emptyInnings(number: number, batting: string, bowling: string): Innings
     bowlers: [],
     fow: [],
     overs: [],
+    over_stats: [],
     striker: null,
     non_striker: null,
     bowler: null,
@@ -342,6 +344,7 @@ export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: Scorin
       batter(next, e.non_striker);
       bowlerLine(next, e.bowler);
       next.overs.push([]);
+      next.over_stats.push({ runs: 0, wickets: 0 });
       // last innings chases: everything the other side scored, minus what this side already has, plus one
       if (next.number === lastInnings) {
         const totals = teamTotals(state);
@@ -390,6 +393,7 @@ export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: Scorin
         b.out = true;
         inn.wickets++;
         inn.fow.push({ wicket: inn.wickets, runs: inn.runs, balls: inn.legal_balls, player: e.player });
+        inn.over_stats.at(-1)!.wickets++;
       }
       if (inn.striker === e.player) inn.striker = null;
       if (inn.non_striker === e.player) inn.non_striker = null;
@@ -437,6 +441,9 @@ export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: Scorin
     // on a free hit only a run out counts
     const wicket = e.wicket && !(wasFreeHit && e.wicket.kind !== "run_out") ? e.wicket : null;
     inn.overs.at(-1)!.push(markFor(e.runs, e.extra, e.extra_runs, !!wicket));
+    const overStat = inn.over_stats.at(-1)!;
+    overStat.runs += total;
+    if (wicket) overStat.wickets++;
 
     // runs taken swap the batters (boundaries are even so they don't)
     if ((e.runs + e.extra_runs) % 2 === 1) [inn.striker, inn.non_striker] = [inn.non_striker, inn.striker];
@@ -486,7 +493,10 @@ export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: Scorin
       overRuns = 0;
     }
     finishCheck(inn);
-    if (!inn.complete && legal && inn.legal_balls % 6 === 0) inn.overs.push([]);
+    if (!inn.complete && legal && inn.legal_balls % 6 === 0) {
+      inn.overs.push([]);
+      inn.over_stats.push({ runs: 0, wickets: 0 });
+    }
   }
 
   const cur = state.current;

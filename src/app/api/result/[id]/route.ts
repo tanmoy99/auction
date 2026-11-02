@@ -1,12 +1,13 @@
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { resultCard } from "@/lib/result-card";
+import { performanceText, rankMatch } from "@/lib/mvp";
 export async function GET(req: Request, ctx: RouteContext<"/api/result/[id]">) {
   const { id } = await ctx.params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) return Response.json({ error: "Invalid match" }, { status: 404 });
   const admin = supabaseAdmin();
   const { data: m, error } = await admin
     .from("matches")
-    .select("id,tournament_id,team_a_id,team_b_id,status,result_text,a_runs,a_wickets,b_runs,b_wickets,match_type,innings")
+    .select("id,tournament_id,team_a_id,team_b_id,status,result_text,a_runs,a_wickets,b_runs,b_wickets,match_type,innings,winner_team_id")
     .eq("id", id)
     .maybeSingle();
   if (error) return Response.json({ error: "Result unavailable. Retry later" }, { status: 503 });
@@ -68,6 +69,13 @@ export async function GET(req: Request, ctx: RouteContext<"/api/result/[id]">) {
           )
           .join(" · ")
       : `${m.a_runs ?? 0}/${m.a_wickets ?? 0} · ${m.b_runs ?? 0}/${m.b_wickets ?? 0}`;
+  // Player of the Match, from the same points formula as the match page (left off if the stats can't be read)
+  const { data: lines } = await admin
+    .from("player_match_stats")
+    .select("match_player_id,name,team_id,did_bat,bat_runs,bat_balls,fours,sixes,bowl_balls,bowl_runs,wickets,maidens,catches,stumpings,run_outs")
+    .eq("match_id", id);
+  const best = rankMatch(lines ?? [], (l) => l.match_player_id, m.winner_team_id)[0];
+  const bestName = best && lines?.find((l) => l.match_player_id === best.id)?.name;
   return resultCard(
     t.data.name,
     names,
@@ -75,5 +83,6 @@ export async function GET(req: Request, ctx: RouteContext<"/api/result/[id]">) {
     detail,
     sponsors.data.map((s) => s.name),
     logos,
+    bestName ? `Player of the Match: ${bestName} · ${performanceText(best)}` : undefined,
   );
 }

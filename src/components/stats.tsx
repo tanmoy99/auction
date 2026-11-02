@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, Trophy } from "lucide-react";
 import type { PlayerStatRow } from "@/lib/hooks";
+import { performancePoints } from "@/lib/mvp";
 import { ballsText, runRate } from "@/lib/scoring";
 import type { Team } from "@/lib/types";
 import { Card, EmptyState, TeamDot, cn } from "./ui";
@@ -20,7 +21,9 @@ export type PlayerTotals = {
   high_not_out: boolean;
   fours: number;
   sixes: number;
-  fifties: number;
+  fifties: number; // 50 or more, hundreds included
+  hundreds: number;
+  points: { bat: number; bowl: number; field: number; total: number }; // MVP points (lib/mvp.ts)
   bowl_balls: number;
   bowl_runs: number;
   wickets: number;
@@ -54,6 +57,8 @@ export function tournamentTotals(rows: PlayerStatRow[]) {
         fours: 0,
         sixes: 0,
         fifties: 0,
+        hundreds: 0,
+        points: { bat: 0, bowl: 0, field: 0, total: 0 },
         bowl_balls: 0,
         bowl_runs: 0,
         wickets: 0,
@@ -79,7 +84,13 @@ export function tournamentTotals(rows: PlayerStatRow[]) {
         t.high_not_out = !r.out;
       }
       if (r.bat_runs >= 50) t.fifties++;
+      if (r.bat_runs >= 100) t.hundreds++;
     }
+    const pts = performancePoints(r);
+    t.points.bat += pts.bat;
+    t.points.bowl += pts.bowl;
+    t.points.field += pts.field;
+    t.points.total += pts.total;
     t.fours += r.fours;
     t.sixes += r.sixes;
     t.bowl_balls += r.bowl_balls;
@@ -116,7 +127,7 @@ function Leader({ title, value, sub, player, team }: { title: string; value: str
 }
 
 export function StatsView({ rows, teams }: { rows: PlayerStatRow[]; teams: Map<string, Team> }) {
-  const [tab, setTab] = useState<"batting" | "bowling" | "fielding">("batting");
+  const [tab, setTab] = useState<"mvp" | "batting" | "bowling" | "fielding">("mvp");
   const totals = useMemo(() => tournamentTotals(rows), [rows]);
   const matchesDone = new Set(rows.map((r) => r.match_id)).size;
 
@@ -139,6 +150,24 @@ export function StatsView({ rows, teams }: { rows: PlayerStatRow[]; teams: Map<s
   const strike = top(totals.filter((t) => t.balls >= 20), (t) => runRate(t.runs, t.balls));
   const economy = top(totals.filter((t) => t.bowl_balls >= 12), (t) => -runRate(t.bowl_runs, t.bowl_balls));
   const catches = top(totals, (t) => t.catches);
+  const mvp = top(totals, (t) => t.points.total * 1000 + t.runs);
+  const mostFours = top(totals, (t) => t.fours);
+  const mostFifties = top(totals, (t) => t.fifties * 1000 + t.runs);
+  const sum = (f: (r: PlayerStatRow) => number) => rows.reduce((n, r) => n + f(r), 0);
+  const summary: [string, number][] = [
+    ["Runs", sum((r) => r.bat_runs)],
+    ["Wickets", sum((r) => r.wickets)],
+    ["Fours", sum((r) => r.fours)],
+    ["Sixes", sum((r) => r.sixes)],
+    ["50s", totals.reduce((n, t) => n + t.fifties - t.hundreds, 0)],
+    ["100s", totals.reduce((n, t) => n + t.hundreds, 0)],
+  ];
+  const boundaries = [...teams.values()]
+    .map((team) => ({ team, fours: sum((r) => (r.team_id === team.id ? r.fours : 0)), sixes: sum((r) => (r.team_id === team.id ? r.sixes : 0)) }))
+    .filter((b) => b.fours + b.sixes > 0)
+    .sort((a, b) => b.fours * 4 + b.sixes * 6 - (a.fours * 4 + a.sixes * 6));
+  const mostBoundaries = Math.max(...boundaries.map((b) => b.fours + b.sixes), 1);
+  const mvpTable = totals.filter((t) => t.points.total > 0).sort((a, b) => b.points.total - a.points.total || b.runs - a.runs);
   const sr = (t: PlayerTotals) => (t.balls ? ((t.runs * 100) / t.balls).toFixed(1) : "-");
 
   const batting = totals.filter((t) => t.innings > 0).sort((a, b) => b.runs - a.runs || a.balls - b.balls);
@@ -159,6 +188,32 @@ export function StatsView({ rows, teams }: { rows: PlayerStatRow[]; teams: Map<s
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-500">From {matchesDone} scored match{matchesDone === 1 ? "" : "es"}. Updated when each match finishes.</p>
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+        {summary.map(([label, value]) => (
+          <div key={label} className="rounded-xl bg-slate-900 px-3 py-2.5 text-center text-white">
+            <p className="text-xl font-black tabular-nums">{value}</p>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{label}</p>
+          </div>
+        ))}
+      </div>
+      {mvp && mvp.points.total > 0 && (
+        <div className="flex items-center gap-4 rounded-2xl bg-linear-to-r from-amber-400 to-yellow-300 p-4 text-amber-950">
+          <Trophy className="size-8 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-xs font-bold uppercase tracking-widest text-amber-900/80">Tournament MVP</p>
+            <p className="flex items-center gap-1.5 truncate text-xl font-black">
+              <TeamDot color={teams.get(mvp.team_id)?.color ?? "#cbd5e1"} /> {mvp.name}
+            </p>
+            <p className="text-sm font-medium">
+              {mvp.runs} runs · {mvp.wickets} wkts · {mvp.catches + mvp.stumpings + mvp.run_outs} dismissals
+            </p>
+          </div>
+          <p className="ml-auto text-right">
+            <span className="block text-3xl font-black tabular-nums">{mvp.points.total}</span>
+            <span className="text-xs font-semibold">pts</span>
+          </p>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Leader title="Most runs" value={`${mostRuns?.runs ?? 0}`} sub={mostRuns && `${mostRuns.innings} inns · SR ${sr(mostRuns)}`} player={mostRuns} team={teams.get(mostRuns?.team_id ?? "")} />
         <Leader title="Most wickets" value={`${mostWickets?.wickets ?? 0}`} sub={mostWickets && `${ballsText(mostWickets.bowl_balls)} ov · econ ${runRate(mostWickets.bowl_runs, mostWickets.bowl_balls).toFixed(2)}`} player={mostWickets?.wickets ? mostWickets : undefined} team={teams.get(mostWickets?.team_id ?? "")} />
@@ -168,18 +223,86 @@ export function StatsView({ rows, teams }: { rows: PlayerStatRow[]; teams: Map<s
         <Leader title="Best strike rate" value={strike ? sr(strike) : "-"} sub="min 20 balls" player={strike} team={teams.get(strike?.team_id ?? "")} />
         <Leader title="Best economy" value={economy ? runRate(economy.bowl_runs, economy.bowl_balls).toFixed(2) : "-"} sub="min 2 overs" player={economy} team={teams.get(economy?.team_id ?? "")} />
         <Leader title="Most catches" value={`${catches?.catches ?? 0}`} player={catches?.catches ? catches : undefined} team={teams.get(catches?.team_id ?? "")} />
+        <Leader title="Most fours" value={`${mostFours?.fours ?? 0}`} player={mostFours?.fours ? mostFours : undefined} team={teams.get(mostFours?.team_id ?? "")} />
+        <Leader
+          title="Most 50s"
+          value={`${mostFifties?.fifties ?? 0}`}
+          sub={mostFifties?.hundreds ? `incl. ${mostFifties.hundreds} hundred${mostFifties.hundreds === 1 ? "" : "s"}` : undefined}
+          player={mostFifties?.fifties ? mostFifties : undefined}
+          team={teams.get(mostFifties?.team_id ?? "")}
+        />
       </div>
+
+      {boundaries.length > 0 && (
+        <Card className="p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Boundary tracker</p>
+          <div className="mt-3 space-y-2.5">
+            {boundaries.map((b) => (
+              <div key={b.team.id} className="flex items-center gap-3 text-sm">
+                <span className="flex w-28 shrink-0 items-center gap-1.5 truncate font-medium text-slate-800 sm:w-40">
+                  <TeamDot color={b.team.color} className="size-2.5 shrink-0" /> <span className="truncate">{b.team.short_name || b.team.name}</span>
+                </span>
+                <div className="flex h-5 min-w-0 flex-1 overflow-hidden rounded bg-slate-100">
+                  <div className="bg-sky-500" style={{ width: `${(b.fours / mostBoundaries) * 100}%` }} title={`${b.fours} fours`} />
+                  <div className="bg-violet-600" style={{ width: `${(b.sixes / mostBoundaries) * 100}%` }} title={`${b.sixes} sixes`} />
+                </div>
+                <span className="w-20 shrink-0 text-right text-xs tabular-nums text-slate-600">
+                  {b.fours}×4 · {b.sixes}×6
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 flex gap-4 text-xs text-slate-500">
+            <span className="flex items-center gap-1.5">
+              <span className="size-2.5 rounded-sm bg-sky-500" /> Fours
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="size-2.5 rounded-sm bg-violet-600" /> Sixes
+            </span>
+          </p>
+        </Card>
+      )}
 
       <Card className="overflow-hidden">
         <div className="flex border-b border-slate-100 text-sm">
-          {(["batting", "bowling", "fielding"] as const).map((x) => (
-            <button key={x} onClick={() => setTab(x)} className={cn("flex-1 py-2.5 font-medium capitalize", tab === x ? "border-b-2 border-emerald-600 text-emerald-700" : "text-slate-500")}>
+          {(["mvp", "batting", "bowling", "fielding"] as const).map((x) => (
+            <button
+              key={x}
+              onClick={() => setTab(x)}
+              className={cn("flex-1 py-2.5 font-medium", x === "mvp" ? "uppercase" : "capitalize", tab === x ? "border-b-2 border-emerald-600 text-emerald-700" : "text-slate-500")}
+            >
               {x}
             </button>
           ))}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
+            {tab === "mvp" && (
+              <>
+                <thead className="bg-slate-50 text-xs text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Player</th>
+                    <th className={th}>M</th>
+                    <th className={th}>Bat</th>
+                    <th className={th}>Bowl</th>
+                    <th className={th}>Field</th>
+                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Points</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {mvpTable.map((t) => (
+                    <tr key={t.key}>
+                      {nameCell(t)}
+                      <td className={td}>{t.matches}</td>
+                      <td className={td}>{t.points.bat}</td>
+                      <td className={td}>{t.points.bowl}</td>
+                      <td className={td}>{t.points.field}</td>
+                      <td className="px-3 py-2 text-right font-bold tabular-nums text-slate-900">{t.points.total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </>
+            )}
             {tab === "batting" && (
               <>
                 <thead className="bg-slate-50 text-xs text-slate-500">
@@ -272,6 +395,12 @@ export function StatsView({ rows, teams }: { rows: PlayerStatRow[]; teams: Map<s
             )}
           </table>
         </div>
+        {tab === "mvp" && (
+          <p className="border-t border-slate-100 px-3 py-2 text-xs text-slate-400">
+            1 per run, +1 per four, +2 per six, +10 for a fifty, +20 more for a hundred · 20 per wicket, +10 for 3 wickets, +20 more for 5, 10 per maiden · 8
+            per catch, 10 per stumping or run out.
+          </p>
+        )}
       </Card>
     </div>
   );
