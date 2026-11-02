@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { BarChart3, Trophy } from "lucide-react";
 import type { PlayerStatRow } from "@/lib/hooks";
 import { performancePoints } from "@/lib/mvp";
@@ -10,6 +11,7 @@ import { Card, EmptyState, TeamDot, cn } from "./ui";
 
 export type PlayerTotals = {
   key: string;
+  player_id: string | null; // auction player (has a public profile); null for guests
   name: string;
   team_id: string;
   matches: number;
@@ -45,6 +47,7 @@ export function tournamentTotals(rows: PlayerStatRow[]) {
     if (!t) {
       t = {
         key,
+        player_id: r.player_id,
         name: r.name,
         team_id: r.team_id,
         matches: 0,
@@ -180,7 +183,13 @@ export function StatsView({ rows, teams }: { rows: PlayerStatRow[]; teams: Map<s
     <td className="px-3 py-2">
       <span className="flex items-center gap-2 font-medium text-slate-900">
         <TeamDot color={teams.get(t.team_id)?.color ?? "#cbd5e1"} className="size-2.5 shrink-0" />
-        <span className="max-w-44 truncate">{t.name}</span>
+        {t.player_id ? (
+          <Link href={`/player/${t.player_id}`} className="max-w-44 truncate hover:text-emerald-700 hover:underline">
+            {t.name}
+          </Link>
+        ) : (
+          <span className="max-w-44 truncate">{t.name}</span>
+        )}
       </span>
     </td>
   );

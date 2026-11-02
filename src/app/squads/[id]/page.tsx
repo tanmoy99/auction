@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Download } from "lucide-react";
 import { Logo } from "@/components/app-header";
@@ -82,7 +83,9 @@ export default function SquadsPage() {
                     <Avatar name={p.name} src={p.photo_url} size={30} />
                     <div className="min-w-0 flex-1">
                       <p className="flex items-center gap-1.5 text-sm font-medium text-slate-800">
-                        <span className="truncate">{p.name}</span>
+                        <Link href={`/player/${p.id}`} className="truncate hover:text-emerald-700 hover:underline">
+                          {p.name}
+                        </Link>
                         <RoleBadges player={p} />
                       </p>
                       <p className="truncate text-xs text-slate-500">{p.role}</p>

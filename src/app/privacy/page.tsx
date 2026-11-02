@@ -8,8 +8,9 @@ export default function Privacy() {
         Supabase. Hosting is provided through Vercel.
       </p>
       <p>
-        Approved player profiles, photos, squads, scores and statistics are visible on public tournament pages. Phone numbers are stored
-        separately for the organiser. Registration links can be used by anyone who receives them; share them only where you intend to accept
+        Approved player profiles, photos, squads, scores and statistics are visible on public tournament pages. Each approved player also has
+        a public profile page that brings together the tournaments they played in on CricMitra; entries are matched by mobile number and first
+        name inside the database, and the number itself is never shown. Phone numbers are stored separately for the organiser. Registration links can be used by anyone who receives them; share them only where you intend to accept
         registrations.
       </p>
       <p>
