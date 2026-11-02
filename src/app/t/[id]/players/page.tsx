@@ -5,6 +5,7 @@ import { Check, KeyRound, Pencil, Plus, Search, Shield, Trash2, Undo2, Upload, U
 import { useTournament } from "@/components/tournament-context";
 import { toast } from "@/components/toast";
 import { Avatar, Button, Card, EmptyState, Field, Input, Modal, RoleBadges, Select, StatusBadge, TeamDot, cn } from "@/components/ui";
+import { mobileKey } from "@/lib/config";
 import { errorMessage, rupees } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import type { Player, PlayerStatus } from "@/lib/types";
@@ -214,6 +215,7 @@ export default function PlayersPage() {
           tournament={tournament}
           player={editing}
           phone={editing ? phones[editing.id] ?? "" : ""}
+          takenBy={(mobile) => players.find((p) => p.id !== editing?.id && mobileKey(phones[p.id] ?? "") === mobile)?.name}
           onClose={() => setEditing(undefined)}
           onSaved={() => {
             reload();

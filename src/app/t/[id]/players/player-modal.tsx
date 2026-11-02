@@ -4,6 +4,7 @@ import { useState } from "react";
 import { PlayerFields, emptyPlayerForm, type PlayerFormValues } from "@/components/player-fields";
 import { toast } from "@/components/toast";
 import { Button, Field, Input, Modal } from "@/components/ui";
+import { mobileKey } from "@/lib/config";
 import { errorMessage } from "@/lib/format";
 import { uploadPhoto } from "@/lib/image";
 import { supabase } from "@/lib/supabase";
@@ -13,12 +14,14 @@ export function PlayerModal({
   tournament,
   player,
   phone,
+  takenBy,
   onClose,
   onSaved,
 }: {
   tournament: Tournament;
   player: Player | null; // null = new player
   phone: string;
+  takenBy?: (mobile: string) => string | undefined; // name of another player in this tournament with this mobile
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -49,6 +52,10 @@ export function PlayerModal({
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const mobile = mobileKey(values.phone);
+    if (values.phone.trim() && !mobile) return toast("Enter a 10-digit Indian mobile number, or leave it empty", "error");
+    const other = mobile ? takenBy?.(mobile) : undefined;
+    if (other) return toast(`This mobile number is already used by ${other} in this tournament`, "error");
     setSaving(true);
     try {
       const photo_url = photo ? await uploadPhoto(tournament.id, photo) : values.photo_url || null;
@@ -71,7 +78,8 @@ export function PlayerModal({
       onSaved();
       onClose();
     } catch (err) {
-      toast(errorMessage(err), "error");
+      const message = errorMessage(err);
+      toast(/contacts_tournament_mobile_unique|duplicate key/.test(message) ? "This mobile number is already used by another player in this tournament" : message, "error");
     } finally {
       setSaving(false);
     }
