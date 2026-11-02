@@ -87,3 +87,15 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .animate-ring { animation: none; }
 }
+
+/* Article text on the public guide pages */
+.guide { color: #334155; font-size: 1.0625rem; line-height: 1.75; }
+.guide > h2 { margin: 2.5rem 0 0.75rem; font-size: 1.5rem; font-weight: 900; color: #0f172a; line-height: 1.3; }
+.guide > h3 { margin: 1.75rem 0 0.5rem; font-size: 1.15rem; font-weight: 700; color: #0f172a; }
+.guide > p { margin: 0.9rem 0; }
+.guide > ul, .guide > ol { margin: 0.9rem 0; padding-left: 1.4rem; }
+.guide > ul { list-style: disc; }
+.guide > ol { list-style: decimal; }
+.guide > ul > li, .guide > ol > li { margin: 0.35rem 0; }
+.guide strong { color: #0f172a; }
+.guide a { color: #047857; text-decoration: underline; }

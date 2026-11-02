@@ -289,6 +289,7 @@ export default function Home() {
             © {APP_NAME} · Player auctions, fixtures & live scoring for local cricket
           </p>
           <div className="flex flex-wrap justify-center gap-4">
+            <Link href="/guides" className="hover:text-slate-800">Auction guides</Link>
             <Link href="/privacy" className="hover:text-slate-800">Privacy and support</Link>
             <Link href="/demo" className="hover:text-slate-800">Explore demo tournament</Link>
             <Link href="/signup" className="hover:text-slate-800">
