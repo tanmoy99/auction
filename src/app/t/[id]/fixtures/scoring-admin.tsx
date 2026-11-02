@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Copy, MessageCircle, RefreshCw, UserPlus, X } from "lucide-react";
+import { Check, Copy, ExternalLink, MessageCircle, RefreshCw, Tv, UserPlus, X } from "lucide-react";
 import { toast } from "@/components/toast";
 import { Button, Card, Field, Input, Modal, Spinner, TeamDot } from "@/components/ui";
 import { DEFAULT_SETTINGS, OVERS_PRESETS, type Match } from "@/lib/fixtures";
@@ -75,9 +75,42 @@ export function ScorerLinkModal({ match, teams, onClose }: { match: Match; teams
             </Button>
           </div>
           <p className="text-xs text-slate-500">Making a new PIN stops the old one and signs out whoever is scoring now.</p>
+          <StreamOverlayLink matchId={match.id} />
         </div>
       )}
     </Modal>
+  );
+}
+
+// Score banner for YouTube / Facebook live streams made with OBS or a streaming app
+function StreamOverlayLink({ matchId }: { matchId: string }) {
+  const link = `${window.location.origin}/match/${matchId}/overlay`;
+  return (
+    <div className="space-y-2 rounded-xl border border-slate-200 p-3">
+      <p className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+        <Tv className="size-4 text-emerald-600" /> Live stream score overlay
+      </p>
+      <p className="text-xs text-slate-500">
+        Streaming this match? In OBS or Streamlabs, add a <b>Browser source</b> with this link, size 1920 × 1080. The live score shows as a banner over your
+        video. Add <code>?position=top</code> to put it at the top.
+      </p>
+      <div className="flex items-center gap-2 rounded-lg bg-slate-50 p-2">
+        <span className="min-w-0 flex-1 truncate text-sm text-slate-600">{link}</span>
+        <Button
+          variant="secondary"
+          size="sm"
+          title="Copy overlay link"
+          onClick={() => navigator.clipboard.writeText(link).then(() => toast("Copied", "success"), () => toast("Couldn't copy", "error"))}
+        >
+          <Copy className="size-4" />
+        </Button>
+        <a href={link} target="_blank" rel="noopener noreferrer">
+          <Button variant="secondary" size="sm" title="Preview overlay">
+            <ExternalLink className="size-4" />
+          </Button>
+        </a>
+      </div>
+    </div>
   );
 }
 
