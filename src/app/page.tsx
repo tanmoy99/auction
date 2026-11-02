@@ -286,10 +286,11 @@ export default function Home() {
       <footer className="border-t border-slate-200 bg-white py-8">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 text-sm text-slate-500 sm:flex-row">
           <p>
-            © {APP_NAME} · Player auctions, fixtures & live scoring for local cricket
+            © {APP_NAME} · Everything for your cricket tournament: registration, auction, fixtures, live scoring & stats
           </p>
           <div className="flex flex-wrap justify-center gap-4">
-            <Link href="/guides" className="hover:text-slate-800">Auction guides</Link>
+            <Link href="/guides" className="hover:text-slate-800">Guides</Link>
+            <Link href="/contact" className="hover:text-slate-800">Contact us</Link>
             <Link href="/privacy" className="hover:text-slate-800">Privacy and support</Link>
             <Link href="/demo" className="hover:text-slate-800">Explore demo tournament</Link>
             <Link href="/signup" className="hover:text-slate-800">

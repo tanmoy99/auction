@@ -19,8 +19,11 @@ export default function Privacy() {
       </p>
       <p>
         For registration corrections, photo removal, team login recovery or tournament questions, contact the organiser who provided your
-        tournament link. For account access issues, use the site administrator contact already provided to you. This application does not
-        currently publish a dedicated support email.
+        tournament link first. For anything else, including account access, reach us on the{" "}
+        <Link className="text-emerald-700 underline" href="/contact">
+          contact page
+        </Link>{" "}
+        (WhatsApp or email).
       </p>
       <p>
         Organisers can manage and delete tournament records. No automatic retention period is promised here. Public links and images can be

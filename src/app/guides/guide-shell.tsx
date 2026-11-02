@@ -6,6 +6,9 @@ import { APP_NAME } from "@/lib/config";
 export type Faq = { q: string; a: string };
 
 export const GUIDES = [
+  { href: "/guides/how-to-organise-cricket-tournament", title: "How to organise a local cricket tournament", lang: "English" },
+  { href: "/guides/cricket-tournament-fixtures", title: "Cricket tournament fixtures, points table & NRR", lang: "English" },
+  { href: "/guides/live-cricket-scoring", title: "Live cricket scoring from your phone", lang: "English" },
   { href: "/guides/how-to-run-cricket-player-auction", title: "How to run a cricket player auction", lang: "English" },
   { href: "/guides/cricket-auction-rules", title: "Cricket auction rules & purse calculator", lang: "English" },
   { href: "/guides/hi/cricket-auction-kaise-kare", title: "क्रिकेट प्लेयर ऑक्शन कैसे करें", lang: "हिन्दी" },
@@ -20,7 +23,7 @@ export function GuideShell({
   intro,
   faqs = [],
   faqTitle = "Frequently asked questions",
-  cta = { title: `Run your next auction on ${APP_NAME}`, text: "Free to start. Set up players, teams and owner logins tonight.", button: "Create your tournament" },
+  cta = { title: `Run your whole tournament on ${APP_NAME}`, text: "Free to start. Registration, auction, fixtures, live scoring and stats in one app.", button: "Create your tournament" },
   children,
 }: {
   lang?: string;

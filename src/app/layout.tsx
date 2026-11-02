@@ -18,14 +18,14 @@ const geistMono = localFont({
 });
 
 const description =
-  "Cricket tournament app for India: player registration, live player auction, fixtures, ball-by-ball live scoring and stats, on any phone.";
+  "All-in-one cricket tournament app for India: player registration, IPL-style auction, fixtures and points table, ball-by-ball live scoring and stats, on any phone.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: { default: `${APP_NAME} - Cricket auction app, fixtures & live scoring`, template: `%s | ${APP_NAME}` },
+  title: { default: `${APP_NAME} - All-in-one cricket tournament app: auction, fixtures & live scoring`, template: `%s | ${APP_NAME}` },
   description,
-  keywords: ["cricket auction app", "cricket player auction", "cricket tournament app", "live cricket scoring", "local cricket league", "IPL style auction"],
-  openGraph: { type: "website", siteName: APP_NAME, locale: "en_IN", title: `${APP_NAME} - Cricket auction app`, description },
+  keywords: ["cricket tournament app", "cricket tournament management", "live cricket scoring app", "cricket fixtures maker", "cricket auction app", "local cricket league"],
+  openGraph: { type: "website", siteName: APP_NAME, locale: "en_IN", title: `${APP_NAME} - All-in-one cricket tournament app`, description },
 };
 
 export const viewport: Viewport = {
