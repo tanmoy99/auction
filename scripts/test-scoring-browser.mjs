@@ -112,6 +112,24 @@ try {
   await context.setOffline(false);
   await page.getByText("Saved · 0 unsaved actions", { exact: true }).waitFor();
   assert.equal(events.at(-1).id, JSON.parse(firstPending)[0].id, "the offline ball was not saved after a revision-only change");
+  // Shot direction (wagon wheel): off by default; when on, runs off the bat ask where the shot went
+  await page.getByRole("button", { name: "4", exact: true }).click();
+  await page.getByText("Saved · 0 unsaved actions", { exact: true }).waitFor();
+  assert.equal(events.at(-1).data.runs, 4);
+  assert.equal(events.at(-1).data.zone, undefined, "direction recorded while switched off");
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "4", exact: true }).click();
+  await page.getByRole("button", { name: "Cover", exact: true }).click();
+  await page.getByText("Saved · 0 unsaved actions", { exact: true }).waitFor();
+  assert.equal(events.at(-1).data.runs, 4);
+  assert.equal(events.at(-1).data.zone, 1, "picked direction not saved with the ball");
+  await page.getByRole("button", { name: "1", exact: true }).click();
+  await page.getByRole("button", { name: "Skip", exact: true }).click();
+  await page.getByText("Saved · 0 unsaved actions", { exact: true }).waitFor();
+  assert.equal(events.at(-1).data.runs, 1);
+  assert.equal(events.at(-1).data.zone, undefined, "skipped direction should save the ball without one");
+  assert.equal(await page.evaluate(() => localStorage.getItem("cricmitra-wagon-wheel")), "1", "switch not remembered");
+  await page.getByRole("checkbox").uncheck();
   await context.setOffline(true);
   await page.getByRole("button", { name: "2", exact: true }).click();
   await page.getByText("Offline · 1 unsaved actions", { exact: true }).waitFor();
@@ -129,7 +147,7 @@ try {
   await page.getByText("Review required · 1 unsaved actions", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Export pending actions" }).isVisible(), true);
   console.log(
-    "5 scoring-browser scenarios passed: rapid taps, pending Undo, offline persistence, conflict stop, refresh recovery (mocked transport; real UI)",
+    "6 scoring-browser scenarios passed: rapid taps, pending Undo, offline persistence, shot direction, conflict stop, refresh recovery (mocked transport; real UI)",
   );
 } catch (error) {
   const page = context.pages()[0];

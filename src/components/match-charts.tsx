@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Scoreboard } from "./scorecard";
 import { Card, cn } from "./ui";
+import { WagonWheel } from "./wagon-wheel";
 
 // a narrow drawing keeps the axis text readable on phones; it scales up on wider screens
 const W = 460;
@@ -118,17 +119,24 @@ function Worm({ series }: { series: ReturnType<typeof seriesOf> }) {
   );
 }
 
-// Manhattan (runs per over) and worm (runs over time) for a limited-overs match
+type Tab = "manhattan" | "worm" | "wagon wheel";
+
+// Manhattan (runs per over) and worm (runs over time) for limited overs, and the wagon wheel when the scorer recorded shot directions
 export function MatchCharts({ board }: { board: Scoreboard }) {
-  const [tab, setTab] = useState<"manhattan" | "worm">("manhattan");
-  if (board.rules.format === "test") return null;
+  const [picked, setTab] = useState<Tab | null>(null);
+  const [wheelInnings, setWheelInnings] = useState<number | null>(null);
   const series = seriesOf(board);
-  if (!series.some((s) => s.overs.some((o) => o.runs || o.wickets))) return null;
+  const overCharts = board.rules.format !== "test" && series.some((s) => s.overs.some((o) => o.runs || o.wickets));
+  const withShots = board.state.innings.map((inn, i) => ({ inn, i })).filter((x) => x.inn.shots.length);
+  const tabs: Tab[] = [...(overCharts ? (["manhattan", "worm"] as const) : []), ...(withShots.length ? (["wagon wheel"] as const) : [])];
+  if (!tabs.length) return null;
+  const tab = picked && tabs.includes(picked) ? picked : tabs[0]!;
+  const wheel = withShots.find((x) => x.i === wheelInnings) ?? withShots.at(-1);
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
         <div className="flex gap-1 rounded-lg bg-slate-100 p-0.5 text-sm">
-          {(["manhattan", "worm"] as const).map((t) => (
+          {tabs.map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -138,22 +146,47 @@ export function MatchCharts({ board }: { board: Scoreboard }) {
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap justify-end gap-3 text-xs text-slate-600">
-          {series.map((s) => (
-            <span key={s.label} className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-sm" style={{ background: s.color }} /> {s.label}
+        {tab === "wagon wheel" ? (
+          withShots.length > 1 && (
+            <div className="flex gap-1 text-xs">
+              {withShots.map(({ inn, i }) => (
+                <button
+                  key={i}
+                  onClick={() => setWheelInnings(i)}
+                  className={cn("rounded-md px-2 py-1 font-medium", wheel?.i === i ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600")}
+                >
+                  {board.team(inn.batting_team)?.short_name || board.team(inn.batting_team)?.name}
+                  {board.rules.format === "test" ? ` (${i + 1})` : ""}
+                </button>
+              ))}
+            </div>
+          )
+        ) : (
+          <div className="flex flex-wrap justify-end gap-3 text-xs text-slate-600">
+            {series.map((s) => (
+              <span key={s.label} className="flex items-center gap-1.5">
+                <span className="size-2.5 rounded-sm" style={{ background: s.color }} /> {s.label}
+              </span>
+            ))}
+            <span className="flex items-center gap-1.5">
+              <span className="size-2.5 rounded-full bg-rose-600" /> Wicket
             </span>
-          ))}
-          <span className="flex items-center gap-1.5">
-            <span className="size-2.5 rounded-full bg-rose-600" /> Wicket
-          </span>
-        </div>
+          </div>
+        )}
       </div>
       <div className="px-2 py-3">
-        {tab === "manhattan" ? <Manhattan series={series} /> : <Worm series={series} />}
-        <p className="mt-1 px-2 text-xs text-slate-500">
-          {tab === "manhattan" ? "Runs scored in each over. Red dots are wickets." : "Total runs after each over. Red dots mark overs where wickets fell."}
-        </p>
+        {tab === "wagon wheel" && wheel ? (
+          <div className="px-2">
+            <WagonWheel key={wheel.i} inn={wheel.inn} name={board.name} />
+          </div>
+        ) : (
+          <>
+            {tab === "manhattan" ? <Manhattan series={series} /> : <Worm series={series} />}
+            <p className="mt-1 px-2 text-xs text-slate-500">
+              {tab === "manhattan" ? "Runs scored in each over. Red dots are wickets." : "Total runs after each over. Red dots mark overs where wickets fell."}
+            </p>
+          </>
+        )}
       </div>
     </Card>
   );

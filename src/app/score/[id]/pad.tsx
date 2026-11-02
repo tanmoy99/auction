@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ArrowLeftRight, Flag, Undo2 } from "lucide-react";
 import { breakText, type Scoreboard } from "@/components/scorecard";
+import { ZonePicker } from "@/components/wagon-wheel";
 import { toast } from "@/components/toast";
 import { Button, Card, Field, Modal, Select, TeamDot, cn } from "@/components/ui";
 import { decideResult, resolveTeams, type FixtureSettings, type Match } from "@/lib/fixtures";
@@ -24,6 +25,17 @@ import {
 } from "@/lib/scoring";
 
 type Send = (data: EventData) => Promise<void>;
+type BallData = Extract<EventData, { type: "ball" }>;
+
+// Asking for the shot direction is a per-phone choice, off unless the scorer turns it on
+const WHEEL_KEY = "cricmitra-wagon-wheel";
+function wheelSaved() {
+  try {
+    return typeof window !== "undefined" && localStorage.getItem(WHEEL_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 export function TossPanel({ match, board, send }: { match: Match; board: Scoreboard; send: Send }) {
   const [winner, setWinner] = useState("");
@@ -224,6 +236,8 @@ export function PickPanel({ kind, board, send }: { kind: "batter" | "bowler"; bo
 export function ScoringPad({ board, send, undo, canUndo }: { board: Scoreboard; send: Send; undo: () => void; canUndo: boolean }) {
   const [extra, setExtra] = useState<Extra | null>(null);
   const [wicketOpen, setWicketOpen] = useState(false);
+  const [wheelOn, setWheelOn] = useState(wheelSaved);
+  const [direction, setDirection] = useState<BallData | null>(null); // runs tapped, waiting for the shot direction
   const inn = board.state.current!;
 
   function runs(n: number) {
@@ -232,8 +246,18 @@ export function ScoringPad({ board, send, undo, canUndo }: { board: Scoreboard; 
       if (n === 0) return toast("Byes need at least 1 run", "info");
       send({ type: "ball", runs: 0, extra, extra_runs: n, wicket: null });
     } else if (extra === "wd") send({ type: "ball", runs: 0, extra, extra_runs: n, wicket: null });
+    else if (wheelOn && n > 0) setDirection({ type: "ball", runs: n, extra, extra_runs: 0, wicket: null });
     else send({ type: "ball", runs: n, extra, extra_runs: 0, wicket: null });
     setExtra(null);
+  }
+
+  function toggleWheel(on: boolean) {
+    setWheelOn(on);
+    try {
+      localStorage.setItem(WHEEL_KEY, on ? "1" : "0");
+    } catch {
+      /* the choice just won't be remembered */
+    }
   }
 
   return (
@@ -289,6 +313,24 @@ export function ScoringPad({ board, send, undo, canUndo }: { board: Scoreboard; 
           <ArrowLeftRight className="size-4" /> Swap strike
         </Button>
       </div>
+      <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm">
+        <span>
+          <span className="font-medium text-slate-800">Shot direction</span>
+          <span className="block text-xs text-slate-500">Tap where each scoring shot went, for the wagon wheel</span>
+        </span>
+        <input type="checkbox" className="size-5 accent-emerald-600" checked={wheelOn} onChange={(e) => toggleWheel(e.target.checked)} />
+      </label>
+      {direction && (
+        <Modal open onClose={() => setDirection(null)} title="Shot direction">
+          <ZonePicker
+            runs={direction.runs}
+            onPick={(zone) => {
+              send(zone == null ? direction : { ...direction, zone });
+              setDirection(null);
+            }}
+          />
+        </Modal>
+      )}
       {wicketOpen && (
         <WicketModal
           board={board}

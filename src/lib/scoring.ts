@@ -83,7 +83,14 @@ export const WICKET_KINDS: { key: WicketKind; label: string; bowler: boolean; fi
 export type EventData =
   | { type: "toss"; winner: string; decision: "bat" | "bowl" }
   | { type: "innings_start"; batting_team: string; bowling_team: string; striker: string; non_striker: string; bowler: string; follow_on?: boolean }
-  | { type: "ball"; runs: number; extra: Extra | null; extra_runs: number; wicket: { kind: WicketKind; out: string; fielder: string | null } | null }
+  | {
+      type: "ball";
+      runs: number;
+      extra: Extra | null;
+      extra_runs: number;
+      wicket: { kind: WicketKind; out: string; fielder: string | null } | null;
+      zone?: number | null; // optional shot direction for the wagon wheel (index into ZONES)
+    }
   | { type: "new_batter"; player: string }
   | { type: "new_bowler"; player: string }
   | { type: "swap" }
@@ -93,6 +100,19 @@ export type EventData =
   | { type: "stumps" } // close of play for the day
   | { type: "break"; kind: BreakKind }
   | { type: "end_match" }; // time ran out: the match is drawn
+
+// Wagon wheel: eight parts of the field, clockwise from straight past the bowler, as seen from behind the batter
+// (off side on the right for a right-hander). `angle` is the middle of the part, in degrees clockwise from straight.
+export const ZONES = [
+  { label: "Long off", angle: 22.5 },
+  { label: "Cover", angle: 67.5 },
+  { label: "Point", angle: 112.5 },
+  { label: "Third man", angle: 157.5 },
+  { label: "Fine leg", angle: 202.5 },
+  { label: "Square leg", angle: 247.5 },
+  { label: "Mid-wicket", angle: 292.5 },
+  { label: "Long on", angle: 337.5 },
+];
 
 export type BreakKind = "lunch" | "tea" | "drinks" | "rain" | "bad_light";
 export const BREAKS: { key: BreakKind; label: string }[] = [
@@ -125,6 +145,7 @@ export type InningsState = {
   overs: BallMark[][];
   over_stats: { runs: number; wickets: number }[]; // one per over, in step with overs (Manhattan and worm charts)
   commentary: CommentaryLine[];
+  shots: { batter: string; runs: number; zone: number }[]; // scoring shots with a direction (wagon wheel)
   striker: string | null;
   non_striker: string | null;
   bowler: string | null;
@@ -177,6 +198,7 @@ function emptyInnings(number: number, batting: string, bowling: string): Innings
     overs: [],
     over_stats: [],
     commentary: [],
+    shots: [],
     striker: null,
     non_striker: null,
     bowler: null,
@@ -506,6 +528,9 @@ export function replay(events: Pick<MatchEvent, "seq" | "data">[], rules: Scorin
       else if (inn.non_striker === wicket.out) inn.non_striker = null;
     }
 
+    if (e.zone != null && e.zone >= 0 && e.zone < ZONES.length && e.runs > 0 && e.extra !== "wd") {
+      inn.shots.push({ batter: striker.id, runs: e.runs, zone: e.zone });
+    }
     inn.commentary.push({
       ball: ballNo,
       kind: inn.overs.at(-1)!.at(-1)!.kind,

@@ -447,5 +447,26 @@ test("free hit and maiden are called out", () => {
   assert(cur(m2).commentary.at(-1).text === "End of over 1: 0 runs (maiden)", cur(m2).commentary.at(-1).text);
 });
 
+console.log("\nWagon wheel");
+
+test("shots with a direction are kept per batter; balls without one still score normally", () => {
+  const m = match().toss().start();
+  const shot = (runs, zone, extra = null) => m.events.push({ seq: m.events.length + 1, data: { type: "ball", runs, extra, extra_runs: 0, wicket: null, zone } });
+  shot(4, 1);
+  shot(1, 6);
+  m.ball(2);
+  shot(6, 7, "nb");
+  shot(0, 3);
+  shot(3, 99);
+  const inn = cur(m);
+  assert(inn.runs === 4 + 1 + 2 + 7 + 0 + 3, `${inn.runs}`);
+  assert(JSON.stringify(inn.shots) === JSON.stringify([
+    { batter: "a1", runs: 4, zone: 1 },
+    { batter: "a1", runs: 1, zone: 6 },
+    { batter: "a2", runs: 6, zone: 7 },
+  ]), JSON.stringify(inn.shots));
+  assert(S.ZONES.length === 8, "8 zones");
+});
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);
