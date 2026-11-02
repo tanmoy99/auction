@@ -11,7 +11,7 @@ export default async function robots(): Promise<MetadataRoute.Robots> {
       userAgent: "*",
       allow: "/",
       // organiser, owner and scorer screens, private join/registration links and APIs
-      disallow: ["/t/", "/bid/", "/match/*/overlay", "/owner", "/admin", "/dashboard", "/score/", "/join/", "/register/", "/api/", "/auth/", "/reset-password"],
+      disallow: ["/t/", "/bid/", "/match/*/overlay", "/my", "/player-login/", "/owner", "/admin", "/dashboard", "/score/", "/join/", "/register/", "/api/", "/auth/", "/reset-password"],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,
   };

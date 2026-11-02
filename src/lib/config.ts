@@ -22,3 +22,19 @@ export function loginToEmail(login: string) {
   const value = login.trim().toLowerCase();
   return value.includes("@") ? value : `${value}@${OWNER_EMAIL_DOMAIN}`;
 }
+
+// Players log in with their mobile number, which becomes the account email internally (they don't need an email)
+export const PLAYER_EMAIL_DOMAIN = "players.cricauction.app";
+
+// 10-digit Indian mobile, the same rule as public.mobile_key() in the database; null if it isn't one
+export function mobileKey(value: string) {
+  const d = value.replace(/\D/g, "");
+  if (/^[6-9]\d{9}$/.test(d)) return d;
+  if (/^91[6-9]\d{9}$/.test(d)) return d.slice(2);
+  if (/^0[6-9]\d{9}$/.test(d)) return d.slice(1);
+  return null;
+}
+
+export function playerEmail(mobile: string) {
+  return `${mobile}@${PLAYER_EMAIL_DOMAIN}`;
+}

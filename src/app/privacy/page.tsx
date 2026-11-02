@@ -10,7 +10,7 @@ export default function Privacy() {
       <p>
         Approved player profiles, photos, squads, scores and statistics are visible on public tournament pages. Each approved player also has
         a public profile page that brings together the tournaments they played in on CricMitra; entries are matched by mobile number and first
-        name inside the database, and the number itself is never shown. Phone numbers are stored separately for the organiser. Registration links can be used by anyone who receives them; share them only where you intend to accept
+        name inside the database, and the number itself is never shown. Organisers can send an approved player a one-time link to create a player login; the player then signs in with their mobile number and a password to see their own stats. Phone numbers are stored separately for the organiser. Registration links can be used by anyone who receives them; share them only where you intend to accept
         registrations.
       </p>
       <p>

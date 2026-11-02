@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Pencil, Plus, Search, Shield, Trash2, Undo2, Upload, UserRound, X } from "lucide-react";
+import { Check, KeyRound, Pencil, Plus, Search, Shield, Trash2, Undo2, Upload, UserRound, X } from "lucide-react";
 import { useTournament } from "@/components/tournament-context";
 import { toast } from "@/components/toast";
 import { Avatar, Button, Card, EmptyState, Field, Input, Modal, RoleBadges, Select, StatusBadge, TeamDot, cn } from "@/components/ui";
@@ -11,6 +11,7 @@ import type { Player, PlayerStatus } from "@/lib/types";
 import { ROLES } from "@/lib/types";
 import { ImportModal } from "./import-modal";
 import { PlayerModal } from "./player-modal";
+import { PlayerLoginModal } from "./player-login-modal";
 
 const FILTERS: { value: PlayerStatus | "all"; label: string }[] = [
   { value: "all", label: "All" },
@@ -34,6 +35,7 @@ export default function PlayersPage() {
   const [editing, setEditing] = useState<Player | null | undefined>(undefined); // undefined = closed, null = new
   const [importing, setImporting] = useState(false);
   const [assigning, setAssigning] = useState<Player | null>(null);
+  const [inviting, setInviting] = useState<Player | null>(null);
 
   const loadPhones = useCallback(() => fetchPhones(tournament.id).then(setPhones), [tournament.id]);
 
@@ -187,6 +189,11 @@ export default function PlayersPage() {
                       <Undo2 className="size-4" />
                     </IconButton>
                   )}
+                  {p.status !== "pending" && phones[p.id] && (
+                    <IconButton title="Send player login (WhatsApp)" onClick={() => setInviting(p)}>
+                      <KeyRound className="size-4" />
+                    </IconButton>
+                  )}
                   <IconButton title="Edit" onClick={() => setEditing(p)}>
                     <Pencil className="size-4" />
                   </IconButton>
@@ -226,6 +233,7 @@ export default function PlayersPage() {
         />
       )}
       {assigning && <AssignModal player={assigning} onClose={() => setAssigning(null)} />}
+      {inviting && <PlayerLoginModal player={inviting} phone={phones[inviting.id] ?? ""} tournament={tournament.name} onClose={() => setInviting(null)} />}
     </div>
   );
 }

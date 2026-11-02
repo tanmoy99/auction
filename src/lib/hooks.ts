@@ -22,7 +22,8 @@ export function useUser() {
   }, []);
 
   const isOwner = user?.app_metadata?.role === "owner";
-  return { user, loading, isOwner };
+  const isPlayer = user?.app_metadata?.role === "player";
+  return { user, loading, isOwner, isPlayer };
 }
 
 const OPEN_ACCESS: Access = { is_admin: false, active: true, suspended: false, suspended_reason: null, access_until: null };
@@ -40,17 +41,18 @@ export function useAccess(user: User | null) {
   return user && access?.userId === user.id ? access.value : null;
 }
 
-// Sends visitors to /login (or team owners to /owner) unless they are a signed-in organiser
+// Sends visitors to /login (team owners to /owner, players to /my) unless they are a signed-in organiser
 export function useRequireOrganiser() {
-  const { user, loading, isOwner } = useUser();
-  const access = useAccess(isOwner ? null : user);
+  const { user, loading, isOwner, isPlayer } = useUser();
+  const access = useAccess(isOwner || isPlayer ? null : user);
   const router = useRouter();
   useEffect(() => {
     if (loading) return;
     if (!user) router.replace("/login");
     else if (isOwner) router.replace("/owner");
-  }, [loading, user, isOwner, router]);
-  return { user, access, ready: !loading && !!user && !isOwner && !!access };
+    else if (isPlayer) router.replace("/my");
+  }, [loading, user, isOwner, isPlayer, router]);
+  return { user, access, ready: !loading && !!user && !isOwner && !isPlayer && !!access };
 }
 
 // Difference between the database clock and this device, so every phone shows the same countdown

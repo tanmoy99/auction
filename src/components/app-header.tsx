@@ -33,8 +33,8 @@ export function Logo({ dark }: { dark?: boolean }) {
 }
 
 export function AppHeader({ children }: { children?: React.ReactNode }) {
-  const { user, isOwner } = useUser();
-  const access = useAccess(isOwner ? null : user);
+  const { user, isOwner, isPlayer } = useUser();
+  const access = useAccess(isOwner || isPlayer ? null : user);
   const router = useRouter();
 
   async function signOut() {
@@ -55,8 +55,11 @@ export function AppHeader({ children }: { children?: React.ReactNode }) {
                   <ShieldCheck className="size-4" /> Admin
                 </Link>
               )}
-              <Link href={isOwner ? "/owner" : "/dashboard"} className="hidden text-sm font-medium text-slate-600 hover:text-slate-900 sm:block">
-                {isOwner ? "My team" : "My tournaments"}
+              <Link
+                href={isOwner ? "/owner" : isPlayer ? "/my" : "/dashboard"}
+                className="hidden text-sm font-medium text-slate-600 hover:text-slate-900 sm:block"
+              >
+                {isOwner ? "My team" : isPlayer ? "My cricket" : "My tournaments"}
               </Link>
               <Button variant="ghost" size="sm" onClick={signOut} title="Sign out">
                 <LogOut className="size-4" />

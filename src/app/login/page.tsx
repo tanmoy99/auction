@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AuthCard } from "@/components/auth-card";
 import { Button, Field, Input } from "@/components/ui";
-import { loginToEmail } from "@/lib/config";
+import { loginToEmail, mobileKey, playerEmail } from "@/lib/config";
 import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
@@ -19,16 +19,21 @@ export default function LoginPage() {
     e.preventDefault();
     setError("");
     setLoading(true);
-    const { data, error } = await supabase.auth.signInWithPassword({ email: loginToEmail(identifier), password });
+    // a mobile number is a player login; if that fails it may still be a team login ID made of digits
+    const mobile = mobileKey(identifier);
+    let result = await supabase.auth.signInWithPassword({ email: mobile ? playerEmail(mobile) : loginToEmail(identifier), password });
+    if (result.error && mobile) result = await supabase.auth.signInWithPassword({ email: loginToEmail(identifier), password });
     setLoading(false);
-    if (error) return setError(error.message === "Invalid login credentials" ? "Wrong login ID / email or password" : error.message);
-    router.push(data.user?.app_metadata?.role === "owner" ? "/owner" : "/dashboard");
+    const { data, error } = result;
+    if (error) return setError(error.message === "Invalid login credentials" ? "Wrong login details or password" : error.message);
+    const role = data.user?.app_metadata?.role;
+    router.push(role === "owner" ? "/owner" : role === "player" ? "/my" : "/dashboard");
   }
 
   return (
     <AuthCard
       title="Welcome back"
-      subtitle="Organisers use their email. Team owners use the login ID given by the organiser."
+      subtitle="Organisers use their email. Team owners use their login ID. Players use their mobile number."
       footer={
         <>
           Organising a tournament?{" "}
@@ -39,7 +44,7 @@ export default function LoginPage() {
       }
     >
       <form onSubmit={onSubmit} className="space-y-4">
-        <Field label="Email or team login ID">
+        <Field label="Email, team login ID or mobile number">
           <Input value={identifier} onChange={(e) => setIdentifier(e.target.value)} autoCapitalize="none" autoComplete="username" required />
         </Field>
         <Field label="Password">
