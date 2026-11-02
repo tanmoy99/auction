@@ -21,6 +21,8 @@ import { AppHeader } from "@/components/app-header";
 import { AuctionDemo, CountUp, GavelBadge, Reveal, ScoringDemo, TableDemo } from "@/components/landing";
 import { APP_NAME } from "@/lib/config";
 
+export const metadata = { alternates: { canonical: "/" } };
+
 const journey = [
   { icon: ClipboardList, title: "Register", text: "Players sign up from a WhatsApp link or your Google Form", color: "from-sky-500 to-cyan-400" },
   { icon: Gavel, title: "Auction", text: "Owners bid live from their phones, the purse is checked on every bid", color: "from-emerald-500 to-lime-400" },

@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { Toaster } from "@/components/toast";
 import { SetupBanner } from "@/components/setup-banner";
-import { APP_NAME } from "@/lib/config";
+import { APP_NAME, SITE_URL } from "@/lib/config";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -17,9 +17,15 @@ const geistMono = localFont({
   variable: "--font-geist-mono",
 });
 
+const description =
+  "Cricket tournament app for India: player registration, live player auction, fixtures, ball-by-ball live scoring and stats, on any phone.";
+
 export const metadata: Metadata = {
-  title: { default: `${APP_NAME} - Cricket auctions, fixtures & live scoring`, template: `%s | ${APP_NAME}` },
-  description: "Run your local cricket tournament: player registration, live auction, fixtures, ball-by-ball scoring and stats, on any phone.",
+  metadataBase: new URL(SITE_URL),
+  title: { default: `${APP_NAME} - Cricket auction app, fixtures & live scoring`, template: `%s | ${APP_NAME}` },
+  description,
+  keywords: ["cricket auction app", "cricket player auction", "cricket tournament app", "live cricket scoring", "local cricket league", "IPL style auction"],
+  openGraph: { type: "website", siteName: APP_NAME, locale: "en_IN", title: `${APP_NAME} - Cricket auction app`, description },
 };
 
 export const viewport: Viewport = {
