@@ -3,7 +3,7 @@
 
 import type { InningsSummary, LiveScore, ScoringRules } from "./scoring";
 
-export type FixtureFormat = "league" | "groups" | "knockout";
+export type FixtureFormat = "league" | "groups" | "knockout" | "custom"; // custom = the organiser adds every match by hand
 export type Playoff = "none" | "final" | "semis" | "quarters" | "ipl";
 
 export type FixtureSettings = {
@@ -255,6 +255,7 @@ export function playoffTeams(playoff: Playoff) {
 // Problems with the chosen settings, or null when they can be generated
 export function validateSettings(s: FixtureSettings, teamCount: number, groups?: string[][]) {
   if (teamCount < 2) return "Add at least 2 teams first";
+  if (s.format === "custom") return null; // each hand-made match is checked on its own (see handMadeMatch)
   if (s.format === "league" && s.playoff !== "none" && teamCount < playoffTeams(s.playoff)) {
     return `This playoff needs at least ${playoffTeams(s.playoff)} teams`;
   }
@@ -267,6 +268,29 @@ export function validateSettings(s: FixtureSettings, teamCount: number, groups?:
   }
   if (!s.schedule.start_date) return "Pick a start date";
   if (s.schedule.per_day < 1) return "At least 1 match per day";
+  return null;
+}
+
+// A match the organiser makes by hand. In the points table unless it is a knockout; a hand-made knockout keeps its
+// teams in a_source / b_source, so resolveTeams() never empties them.
+export function handMadeMatch(match_no: number, teamA: string, teamB: string, label: string, knockout: boolean): Omit<NewMatch, "scheduled_at" | "venue"> {
+  return {
+    match_no,
+    stage: knockout ? "knockout" : "league",
+    group_name: null,
+    round: 1,
+    round_name: label.trim() || `Match ${match_no}`,
+    team_a_id: teamA,
+    team_b_id: teamB,
+    a_source: knockout ? { type: "team", team_id: teamA } : null,
+    b_source: knockout ? { type: "team", team_id: teamB } : null,
+  };
+}
+
+// Problem with a hand-made match, or null
+export function handMadeProblem(teamA: string, teamB: string) {
+  if (!teamA || !teamB) return "Pick both teams";
+  if (teamA === teamB) return "Pick two different teams";
   return null;
 }
 

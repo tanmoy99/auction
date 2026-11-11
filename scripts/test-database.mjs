@@ -32,6 +32,9 @@ for (const name of [
   "016_organiser_player_writes",
   "017_auction_serialisation",
   "018_restrict_base_reads",
+  "019_player_career",
+  "020_player_accounts",
+  "021_restart_match",
 ]) {
   await db.exec(await readFile(`supabase/migrations/${name}.sql`, "utf8"));
   console.log(`PASS migration ${name}`);
@@ -344,6 +347,83 @@ await check("legacy duplicates stop migration without deleting player records", 
   await assert.rejects(db.exec(await readFile("supabase/migrations/011_registration_security.sql", "utf8")), /Duplicate mobile/);
   await db.exec("rollback");
   assert.equal((await db.query("select count(*)::int n from public.players")).rows[0].n, before);
+});
+await check("restart match: organiser only; toss, balls, result and stats go; playing XIs stay; score revision moves", async () => {
+  const m = crypto.randomUUID();
+  await db.query(
+    "insert into public.matches(id,tournament_id,match_no,stage,round_name,team_a_id,team_b_id,status,outcome,winner_team_id,result_text,a_runs,live_score) values($1,$2,50,'league','League',$3,$4,'completed','win',$3,'Royals won',120,'{}')",
+    [m, ids.t, teamA, teamB],
+  );
+  await db.query("insert into public.match_events(match_id,tournament_id,seq,type,data) values($1,$2,1,'toss','{}'),($1,$2,2,'ball','{}')", [m, ids.t]);
+  await db.query("insert into public.match_players(match_id,tournament_id,team_id,name) values($1,$2,$3,'Opener'),($1,$2,$4,'Bowler')", [m, ids.t, teamA, teamB]);
+  await db.query("insert into public.player_match_stats(match_id,match_player_id,tournament_id,team_id,name) values($1,gen_random_uuid(),$2,$3,'Opener')", [m, ids.t, teamA]);
+  const before = Number((await db.query("select score_revision from public.matches where id=$1", [m])).rows[0].score_revision);
+  for (const [role, id] of [["anon", null], ["authenticated", ids.other], ["authenticated", ids.owner]])
+    await assert.rejects(as(role, id, "select public.restart_match($1)", [m]));
+  await as("authenticated", ids.org, "select public.restart_match($1)", [m]);
+  const row = (await db.query("select * from public.matches where id=$1", [m])).rows[0];
+  assert.equal(row.status, "scheduled");
+  assert.equal(row.result_text, null);
+  assert.equal(row.winner_team_id, null);
+  assert.equal(row.a_runs, null);
+  assert.equal(row.live_score, null);
+  assert.ok(Number(row.score_revision) > before, "revision must move so old scorer phones stop");
+  const count = async (table) => (await db.query(`select count(*)::int n from public.${table} where match_id=$1`, [m])).rows[0].n;
+  assert.equal(await count("match_events"), 0);
+  assert.equal(await count("player_match_stats"), 0);
+  assert.equal(await count("match_players"), 2);
+});
+await check("restart is refused while a later knockout using the result is under way, then empties its slot", async () => {
+  const semi = crypto.randomUUID(),
+    final = crypto.randomUUID();
+  await db.query(
+    "insert into public.matches(id,tournament_id,match_no,stage,round_name,team_a_id,team_b_id,status,outcome,winner_team_id) values($1,$2,51,'knockout','Semi',$3,$4,'completed','win',$3)",
+    [semi, ids.t, teamA, teamB],
+  );
+  await db.query(
+    `insert into public.matches(id,tournament_id,match_no,stage,round_name,team_a_id,a_source,b_source,status) values($1,$2,52,'knockout','Final',$3,'{"type":"winner","match":51}','{"type":"winner","match":53}','live')`,
+    [final, ids.t, teamA],
+  );
+  await assert.rejects(as("authenticated", ids.org, "select public.restart_match($1)", [semi]), /Restart match 52 first/);
+  assert.equal((await db.query("select status from public.matches where id=$1", [semi])).rows[0].status, "completed");
+  await db.query("update public.matches set status='scheduled' where id=$1", [final]);
+  await as("authenticated", ids.org, "select public.restart_match($1)", [semi]);
+  assert.equal((await db.query("select team_a_id from public.matches where id=$1", [final])).rows[0].team_a_id, null);
+});
+await check("account roles: sign-ups stay organisers, owners and players get their own role, players cannot organise", async () => {
+  const [plain, owner, player] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+  await db.query(
+    `insert into auth.users(id,email,raw_app_meta_data) values($1,'plain@example.invalid','{}'),($2,'own@example.invalid','{"role":"owner"}'),($3,'9876543210@players.cricauction.app','{"role":"player"}')`,
+    [plain, owner, player],
+  );
+  const role = async (id) => (await db.query("select role from public.profiles where id=$1", [id])).rows[0].role;
+  assert.equal(await role(plain), "organiser");
+  assert.equal(await role(owner), "owner");
+  assert.equal(await role(player), "player");
+  await assert.rejects(as("authenticated", player, "insert into public.tournaments(organiser_id,name) values($1,'Not allowed')", [player]));
+  await as("authenticated", plain, "insert into public.tournaments(organiser_id,name) values($1,'Still allowed')", [plain]);
+  await assert.rejects(as("authenticated", player, "select * from public.player_accounts"));
+  await assert.rejects(as("authenticated", player, "select * from public.player_invites"));
+});
+await check("player profile: pending players hidden; tournaments linked by mobile and first name only", async () => {
+  const t2 = crypto.randomUUID(),
+    t3 = crypto.randomUUID(),
+    t4 = crypto.randomUUID();
+  for (const [id, name] of [[t2, "Second cup"], [t3, "Third cup"], [t4, "Fourth cup"]])
+    await db.query("insert into public.tournaments(id,organiser_id,name) values($1,$2,$3)", [id, ids.org, name]);
+  const add = async (t, name, status) => {
+    const id = (await db.query("insert into public.players(tournament_id,name,base_price,status) values($1,$2,500,$3) returning id", [t, name, status])).rows[0].id;
+    await db.query("insert into public.player_contacts(player_id,tournament_id,phone) values($1,$2,'+91 98111 22233')", [id, t]);
+    return id;
+  };
+  const me = await add(ids.t, "Rahul Das", "available");
+  await add(t2, "RAHUL Kumar Das", "available"); // same person, other spelling
+  const pending = await add(t3, "Rahul Das", "pending");
+  await add(t4, "Amit Das", "available"); // shares the family phone: kept apart
+  const career = (await as("anon", null, "select public.player_career($1) c", [me])).rows[0].c;
+  assert.deepEqual(career.entries.map((e) => e.tournament).sort(), ["Second cup", "Test tournament"]);
+  assert.ok(!JSON.stringify(career).includes("98111"), "phone number must never be returned");
+  assert.equal((await as("anon", null, "select public.player_career($1) c", [pending])).rows[0].c, null);
 });
 console.log(`${passed} database checks passed (embedded PostgreSQL; hosted Auth/Storage/Realtime and scheduler untested)`);
 await db.close();

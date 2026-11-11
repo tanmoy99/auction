@@ -233,5 +233,48 @@ test("changing a result before the next round is played updates the next round",
   assert(final.team_a_id !== before && final.team_a_id === sf1.team_b_id, "final not updated");
 });
 
+console.log("\nHand-made fixtures");
+
+test("custom format needs no start date or generated schedule", () => {
+  assert(F.validateSettings({ ...F.DEFAULT_SETTINGS, format: "custom" }, 4) === null, "custom should validate");
+  assert(F.validateSettings({ ...F.DEFAULT_SETTINGS, format: "custom" }, 1) === "Add at least 2 teams first", "still needs 2 teams");
+});
+
+test("hand-made match: league by default, knockout keeps its own teams", () => {
+  const league = F.handMadeMatch(3, "T1", "T2", "", false);
+  assert(league.stage === "league" && league.round_name === "Match 3" && league.a_source === null, JSON.stringify(league));
+  const final = F.handMadeMatch(4, "T1", "T2", " Final ", true);
+  assert(final.stage === "knockout" && final.round_name === "Final", JSON.stringify(final));
+  assert(final.a_source.type === "team" && final.a_source.team_id === "T1" && final.b_source.team_id === "T2", "sources");
+});
+
+test("resolveTeams never empties a hand-made knockout", () => {
+  const list = asMatches([F.handMadeMatch(1, "T1", "T2", "", false), F.handMadeMatch(2, "T3", "T4", "Final", true)].map((m) => ({ ...m, scheduled_at: null, venue: null })));
+  const changes = F.resolveTeams(list, F.DEFAULT_SETTINGS);
+  assert(changes.length === 0, JSON.stringify(changes));
+});
+
+test("hand-made match problems: both teams, and different", () => {
+  assert(F.handMadeProblem("", "T2") === "Pick both teams", "missing team");
+  assert(F.handMadeProblem("T1", "T1") === "Pick two different teams", "same team");
+  assert(F.handMadeProblem("T1", "T2") === null, "valid");
+});
+
+test("restarting a semi-final puts the final back to 'winner of'", () => {
+  const list = asMatches(F.generateFixtures(settings({ format: "knockout" }), teams(4)));
+  const [sf1, sf2] = list;
+  sf1.status = "completed";
+  sf1.winner_team_id = sf1.team_a_id;
+  sf2.status = "completed";
+  sf2.winner_team_id = sf2.team_b_id;
+  const final = list.find((m) => m.round_name === "Final");
+  for (const c of F.resolveTeams(list, F.DEFAULT_SETTINGS)) Object.assign(list.find((m) => m.id === c.id), c);
+  assert(final.team_a_id === sf1.team_a_id, "final filled");
+  Object.assign(sf1, { status: "scheduled", winner_team_id: null });
+  const changes = F.resolveTeams(list, F.DEFAULT_SETTINGS);
+  const back = changes.find((c) => c.id === final.id);
+  assert(back && back.team_a_id === null && back.team_b_id === sf2.team_b_id, JSON.stringify(changes));
+});
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

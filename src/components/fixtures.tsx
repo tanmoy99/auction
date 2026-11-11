@@ -50,6 +50,7 @@ export function formatName(s: FixtureSettings | null) {
   if (!s) return "";
   const legs = s.legs === 2 ? "home & away" : "single round";
   if (s.format === "knockout") return "Knockout";
+  if (s.format === "custom") return "Custom fixtures";
   if (s.format === "groups") return `${s.groups} groups (${legs}), top ${s.qualify} to knockouts`;
   const playoff = { none: "no playoffs", final: "top 2 final", semis: "semi-finals", quarters: "quarter-finals", ipl: "IPL-style playoffs" }[s.playoff];
   return `League (${legs}) + ${playoff}`;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Link2, RotateCcw, SlidersHorizontal, Users } from "lucide-react";
+import { Link2, Plus, RotateCcw, SlidersHorizontal, Users } from "lucide-react";
 import { FixturesView, formatName } from "@/components/fixtures";
 import { useTournament } from "@/components/tournament-context";
 import { toast } from "@/components/toast";
@@ -11,7 +11,7 @@ import { errorMessage } from "@/lib/format";
 import { useMatches } from "@/lib/hooks";
 import { supabase } from "@/lib/supabase";
 import { FixtureGenerator } from "./generator";
-import { EditMatchModal, ResultModal } from "./match-modals";
+import { AddMatchModal, EditMatchModal, ResultModal } from "./match-modals";
 import { GuestRequests, RulesModal, ScorerLinkModal } from "./scoring-admin";
 import { TestMatches } from "./tests";
 
@@ -24,6 +24,7 @@ export default function FixturesPage() {
   const [editing, setEditing] = useState<Match | null>(null);
   const [scorerFor, setScorerFor] = useState<Match | null>(null);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [picked, setSection] = useState<Section | null>(null);
   const teamMap = useMemo(() => new Map(teams.map((x) => [x.id, x])), [teams]);
   const settings = t.fixture_settings ?? DEFAULT_SETTINGS;
@@ -114,6 +115,9 @@ export default function FixturesPage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setAdding(true)}>
+                <Plus className="size-4" /> Add match
+              </Button>
               <Button variant="secondary" size="sm" onClick={() => setRulesOpen(true)}>
                 <SlidersHorizontal className="size-4" /> Match rules
               </Button>
@@ -145,6 +149,19 @@ export default function FixturesPage() {
           }}
         />
       )}
+      {adding && (
+        <AddMatchModal
+          tournamentId={t.id}
+          teams={teams}
+          matches={all}
+          defaults={{ date: settings.schedule?.start_date || t.starts_on || "", venue: settings.schedule?.venue || t.venue || "" }}
+          onClose={() => setAdding(false)}
+          onSaved={() => {
+            setAdding(false);
+            reload();
+          }}
+        />
+      )}
       {scorerFor && <ScorerLinkModal key={scorerFor.id} match={scorerFor} teams={teamMap} onClose={() => setScorerFor(null)} />}
 
       {resultFor && (
@@ -166,6 +183,8 @@ export default function FixturesPage() {
           key={editing.id}
           match={editing}
           teams={teams}
+          matches={all}
+          settings={settings}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);

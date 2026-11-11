@@ -1,16 +1,18 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarDays, GitFork, ListOrdered, Shuffle, Table2 } from "lucide-react";
-import { matchDay, matchTime } from "@/components/fixtures";
+import { CalendarDays, GitFork, ListOrdered, PencilLine, Plus, Shuffle, Table2, Trash2 } from "lucide-react";
+import { fromISTInputs, matchDay, matchTime } from "@/components/fixtures";
 import { toast } from "@/components/toast";
-import { Button, Card, Field, Input, TeamDot, cn } from "@/components/ui";
+import { Button, Card, Field, Input, Select, TeamDot, cn } from "@/components/ui";
 import {
   DEFAULT_SETTINGS,
   GROUP_NAMES,
   OVERS_PRESETS,
   dealGroups,
   generateFixtures,
+  handMadeMatch,
+  handMadeProblem,
   playoffTeams,
   sourceLabel,
   validateSettings,
@@ -26,7 +28,11 @@ const FORMATS: { key: FixtureFormat; title: string; text: string; icon: typeof T
   { key: "league", title: "League", text: "Everyone plays everyone, points table, then optional playoffs (like IPL)", icon: Table2 },
   { key: "groups", title: "Groups + knockout", text: "Teams split into groups, top teams of each group play knockouts", icon: ListOrdered },
   { key: "knockout", title: "Knockout", text: "Lose and you're out. Byes are added when the team count needs them", icon: GitFork },
+  { key: "custom", title: "Make your own", text: "Add each match yourself: pick the two teams, the day and the time", icon: PencilLine },
 ];
+
+// One hand-made match in the "Make your own" list
+type Row = { key: number; a: string; b: string; date: string; time: string; name: string; knockout: boolean };
 
 const PLAYOFFS: { key: Playoff; label: string; hint: string }[] = [
   { key: "none", label: "No playoffs", hint: "Table topper wins" },
@@ -83,6 +89,15 @@ export function FixtureGenerator({ tournament: t, teams, onCreated }: { tourname
     schedule: { ...DEFAULT_SETTINGS.schedule, start_date: t.starts_on ?? "", venue: t.venue ?? "" },
   }));
   const [order, setOrder] = useState(() => teams.map((x) => x.id));
+  const [rows, setRows] = useState<Row[]>(() => [
+    { key: 1, a: teams[0]?.id ?? "", b: teams[1]?.id ?? "", date: t.starts_on ?? "", time: "09:00", name: "", knockout: false },
+  ]);
+  const custom = s.format === "custom";
+  const setRow = (key: number, patch: Partial<Row>) => setRows(rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const addRow = () => {
+    const last = rows.at(-1);
+    setRows([...rows, { key: Math.max(0, ...rows.map((r) => r.key)) + 1, a: teams[0]?.id ?? "", b: teams[1]?.id ?? "", date: last?.date ?? "", time: last?.time ?? "09:00", name: "", knockout: false }]);
+  };
   const [saving, setSaving] = useState(false);
   const teamById = useMemo(() => new Map(teams.map((x) => [x.id, x])), [teams]);
   const set = (patch: Partial<FixtureSettings>) => setS({ ...s, ...patch });
@@ -93,8 +108,17 @@ export function FixtureGenerator({ tournament: t, teams, onCreated }: { tourname
     () => (s.format === "groups" ? dealGroups(order, Math.min(s.groups, maxGroups)) : undefined),
     [s.format, s.groups, order, maxGroups],
   );
-  const problem = validateSettings(s, teams.length, groups);
-  const preview = useMemo(() => (problem ? [] : generateFixtures(s, order, groups)), [problem, s, order, groups]);
+  const rowProblem = rows.length ? rows.map((r, i) => handMadeProblem(r.a, r.b) && `Match ${i + 1}: ${handMadeProblem(r.a, r.b)}`).find(Boolean) : "Add at least one match";
+  const problem = validateSettings(s, teams.length, groups) ?? (custom ? rowProblem || null : null);
+  const preview = useMemo(
+    () =>
+      problem
+        ? []
+        : custom
+          ? rows.map((r, i) => ({ ...handMadeMatch(i + 1, r.a, r.b, r.name, r.knockout), scheduled_at: fromISTInputs(r.date, r.time), venue: s.schedule.venue.trim() || null }))
+          : generateFixtures(s, order, groups),
+    [problem, custom, rows, s, order, groups],
+  );
   const byNo = useMemo(() => new Map(preview.map((m) => [m.match_no, m])), [preview]);
   const days = new Set(preview.map((m) => matchDay(m.scheduled_at))).size;
   const stageCount = preview.filter((m) => m.stage !== "knockout").length;
@@ -124,7 +148,7 @@ export function FixtureGenerator({ tournament: t, teams, onCreated }: { tourname
         <Card className="p-5">
           <h2 className="font-semibold text-slate-900">1. Choose a format</h2>
           <p className="mb-4 text-sm text-slate-500">{teams.length} teams. You can start over later if you change your mind.</p>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             {FORMATS.map((f) => (
               <button
                 key={f.key}
@@ -144,9 +168,56 @@ export function FixtureGenerator({ tournament: t, teams, onCreated }: { tourname
         </Card>
 
         <Card className="space-y-5 p-5">
-          <h2 className="font-semibold text-slate-900">2. Format options</h2>
+          <h2 className="font-semibold text-slate-900">{custom ? "2. Your matches" : "2. Format options"}</h2>
 
-          {s.format !== "knockout" && (
+          {custom && (
+            <div className="space-y-3">
+              {rows.map((r, i) => (
+                <div key={r.key} className="space-y-2 rounded-xl border border-slate-200 p-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-700">Match {i + 1}</p>
+                    {rows.length > 1 && (
+                      <button type="button" onClick={() => setRows(rows.filter((x) => x.key !== r.key))} className="rounded p-1 text-slate-400 hover:text-rose-600" title="Remove">
+                        <Trash2 className="size-4" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {(["a", "b"] as const).map((side) => (
+                      <Select key={side} value={r[side]} onChange={(e) => setRow(r.key, { [side]: e.target.value })} aria-label={side === "a" ? "Team" : "Opponent"}>
+                        {teams.map((x) => (
+                          <option key={x.id} value={x.id}>
+                            {x.name}
+                          </option>
+                        ))}
+                      </Select>
+                    ))}
+                    <Input type="date" value={r.date} onChange={(e) => setRow(r.key, { date: e.target.value })} aria-label="Date" />
+                    <Input type="time" value={r.time} onChange={(e) => setRow(r.key, { time: e.target.value })} aria-label="Time" />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Input
+                      value={r.name}
+                      onChange={(e) => setRow(r.key, { name: e.target.value })}
+                      placeholder={`Name (optional), e.g. Final`}
+                      maxLength={40}
+                      className="max-w-56"
+                      aria-label="Match name"
+                    />
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input type="checkbox" checked={r.knockout} onChange={(e) => setRow(r.key, { knockout: e.target.checked })} className="size-4 accent-emerald-600" />
+                      Knockout (not in points table)
+                    </label>
+                  </div>
+                </div>
+              ))}
+              <Button type="button" variant="secondary" onClick={addRow}>
+                <Plus className="size-4" /> Add another match
+              </Button>
+            </div>
+          )}
+
+          {s.format !== "knockout" && !custom && (
             <Field label={s.format === "groups" ? "Inside each group, teams play each other" : "Teams play each other"}>
               <Choice
                 value={s.legs}
@@ -265,34 +336,40 @@ export function FixtureGenerator({ tournament: t, teams, onCreated }: { tourname
 
         <Card className="space-y-4 p-5">
           <h2 className="font-semibold text-slate-900">3. Schedule</h2>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="First match day">
-              <Input type="date" value={s.schedule.start_date} onChange={(e) => setSchedule({ start_date: e.target.value })} required />
-            </Field>
-            <Field label="First match time">
-              <Input type="time" value={s.schedule.first_time} onChange={(e) => setSchedule({ first_time: e.target.value })} />
-            </Field>
-            <Field label="Ground / venue">
+          {custom ? (
+            <Field label="Ground / venue" hint="Used for every match. You can change a match's ground later.">
               <Input value={s.schedule.venue} onChange={(e) => setSchedule({ venue: e.target.value })} placeholder="Optional" />
             </Field>
-            <Field label="Matches per day">
-              <Input type="number" min={1} max={12} value={s.schedule.per_day} onChange={(e) => setSchedule({ per_day: Number(e.target.value) })} />
-            </Field>
-            <Field label="Minutes between match starts" hint={`${Math.floor(s.schedule.gap_minutes / 60)}h ${s.schedule.gap_minutes % 60}m per match`}>
-              <Input type="number" min={15} step={15} value={s.schedule.gap_minutes} onChange={(e) => setSchedule({ gap_minutes: Number(e.target.value) })} />
-            </Field>
-            {s.format !== "knockout" && (
-              <label className="flex items-center gap-2 self-center text-sm text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={s.schedule.knockouts_new_day}
-                  onChange={(e) => setSchedule({ knockouts_new_day: e.target.checked })}
-                  className="size-4 accent-emerald-600"
-                />
-                Start knockouts on a new day
-              </label>
-            )}
-          </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="First match day">
+                <Input type="date" value={s.schedule.start_date} onChange={(e) => setSchedule({ start_date: e.target.value })} required />
+              </Field>
+              <Field label="First match time">
+                <Input type="time" value={s.schedule.first_time} onChange={(e) => setSchedule({ first_time: e.target.value })} />
+              </Field>
+              <Field label="Ground / venue">
+                <Input value={s.schedule.venue} onChange={(e) => setSchedule({ venue: e.target.value })} placeholder="Optional" />
+              </Field>
+              <Field label="Matches per day">
+                <Input type="number" min={1} max={12} value={s.schedule.per_day} onChange={(e) => setSchedule({ per_day: Number(e.target.value) })} />
+              </Field>
+              <Field label="Minutes between match starts" hint={`${Math.floor(s.schedule.gap_minutes / 60)}h ${s.schedule.gap_minutes % 60}m per match`}>
+                <Input type="number" min={15} step={15} value={s.schedule.gap_minutes} onChange={(e) => setSchedule({ gap_minutes: Number(e.target.value) })} />
+              </Field>
+              {s.format !== "knockout" && (
+                <label className="flex items-center gap-2 self-center text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={s.schedule.knockouts_new_day}
+                    onChange={(e) => setSchedule({ knockouts_new_day: e.target.checked })}
+                    className="size-4 accent-emerald-600"
+                  />
+                  Start knockouts on a new day
+                </label>
+              )}
+            </div>
+          )}
           <p className="text-xs text-slate-500">You can change the date, time or ground of any match afterwards.</p>
         </Card>
       </div>
