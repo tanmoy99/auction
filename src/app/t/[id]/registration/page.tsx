@@ -44,7 +44,8 @@ function onFormSubmit(e) {
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    // min-w-0: the long registration link is cut with "…" instead of widening the page on narrow screens
+    <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
       <QrShare path={`/register/${t.registration_token}`} label="Registration QR" />
       <Card className="p-5">
         <div className="flex items-start justify-between gap-3">

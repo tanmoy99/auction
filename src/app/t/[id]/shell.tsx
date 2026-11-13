@@ -102,7 +102,8 @@ export function TournamentShell({ children }: { children: React.ReactNode }) {
                 </a>
               </div>
             </div>
-            <nav className="-mb-px mt-4 flex gap-1 overflow-x-auto">
+            {/* narrow screens (phones, zoomed-in PCs): tabs wrap onto a second line instead of scrolling sideways */}
+            <nav className="mt-4 flex flex-wrap gap-1.5 pb-3 lg:-mb-px lg:flex-nowrap lg:gap-1 lg:pb-0">
               {tabs.map((tab) => {
                 const active = pathname === tab.href;
                 return (
@@ -110,8 +111,10 @@ export function TournamentShell({ children }: { children: React.ReactNode }) {
                     key={tab.href}
                     href={tab.href}
                     className={cn(
-                      "flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors",
-                      active ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800",
+                      "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors lg:rounded-none lg:border-b-2 lg:py-2.5",
+                      active
+                        ? "bg-emerald-50 text-emerald-700 lg:border-emerald-600 lg:bg-transparent"
+                        : "text-slate-500 hover:bg-slate-100 hover:text-slate-800 lg:border-transparent lg:hover:bg-transparent",
                     )}
                   >
                     {tab.label}

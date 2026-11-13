@@ -190,7 +190,7 @@ export default function LiveScreen() {
       </main>
 
       <footer className="relative border-t border-white/10 bg-black/30 px-4 py-3">
-        <div className="flex gap-3 overflow-x-auto">
+        <div className="flex flex-wrap gap-3">
           {teams.map((team) => (
             <div
               key={team.id}
