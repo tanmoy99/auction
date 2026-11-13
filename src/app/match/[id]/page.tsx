@@ -14,6 +14,8 @@ import { PlayerOfTheMatch } from "@/components/match-awards";
 import { Commentary } from "@/components/commentary";
 import { Button, Card, EmptyState, PageLoader, TeamDot } from "@/components/ui";
 import { useMatchLive } from "@/lib/hooks";
+import { performanceText, rankMatch } from "@/lib/mvp";
+import { matchStats } from "@/lib/scoring";
 
 // Public live scorecard, ball by ball. Share this link on WhatsApp.
 export default function MatchPage() {
@@ -28,6 +30,15 @@ export default function MatchPage() {
   const a = board.team(m.team_a_id);
   const b = board.team(m.team_b_id);
   const { state } = board;
+  // players who did something in this match, best first (same points as Player of the Match)
+  const performers =
+    m.status === "completed"
+      ? rankMatch(matchStats(state, board.lineups), (l) => l.match_player_id, m.winner_team_id).map((p) => ({
+          id: p.id,
+          name: board.name(p.id),
+          detail: performanceText(p),
+        }))
+      : [];
 
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
@@ -69,7 +80,7 @@ export default function MatchPage() {
       </div>
 
       <QrShare path={`/match/${m.id}`} />
-      {m.status === "completed" && <ResultShare matchId={m.id} players={live.players} />}
+      {m.status === "completed" && <ResultShare matchId={m.id} performers={performers} />}
       <Sponsors tournamentId={m.tournament_id} />
       {m.status === "live" && (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-600 px-3 py-1 text-xs font-bold text-white">

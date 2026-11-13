@@ -1,19 +1,29 @@
 "use client";
 import { useState } from "react";
 import { Button, Select } from "./ui";
-export function ResultShare({ matchId, players }: { matchId: string; players: { id: string; name: string }[] }) {
+
+export type SharePerformer = { id: string; name: string; detail: string };
+
+// Picture of the result (or of one player's performance) to share on WhatsApp.
+// Only players who did something in the match are offered, best performance first.
+export function ResultShare({ matchId, performers }: { matchId: string; performers: SharePerformer[] }) {
   const [player, setPlayer] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   return (
-    <div className="space-y-2">
-      <Select aria-label="Result card type" value={player} onChange={(e) => setPlayer(e.target.value)}>
-        <option value="">Match result card</option>
-        {players.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name} performance
-          </option>
-        ))}
+    <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+      <p className="text-sm font-semibold text-slate-800">Share as an image</p>
+      <Select aria-label="Image to share" value={player} onChange={(e) => setPlayer(e.target.value)}>
+        <option value="">Match result</option>
+        {performers.length > 0 && (
+          <optgroup label="A player's performance (best first)">
+            {performers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} · {p.detail}
+              </option>
+            ))}
+          </optgroup>
+        )}
       </Select>
       <Button
         variant="secondary"
@@ -43,7 +53,7 @@ export function ResultShare({ matchId, players }: { matchId: string; players: { 
           }
         }}
       >
-        Download / share result
+        Download / share image
       </Button>
       {message && (
         <p role="alert" className="text-sm text-rose-700">
