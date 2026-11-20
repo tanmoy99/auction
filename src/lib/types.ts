@@ -88,6 +88,9 @@ export type AuctionState = {
   phase: "idle" | "bidding" | "sold" | "unsold";
   ends_at: string | null;
   next_player_id: string | null;
+  // auction round chosen by the organiser (migration 022); null / missing = every player
+  pool_categories?: string[] | null;
+  pool_roles?: string[] | null;
   updated_at: string;
 };
 
@@ -101,6 +104,8 @@ export type Bid = {
 };
 
 export const ROLES = ["Batsman", "Bowler", "All-rounder", "Wicket-keeper"] as const;
+// Common player categories in local tournaments (any other text works too)
+export const CATEGORY_SUGGESTIONS = ["Under 19", "Local", "Marquee", "Ranji"] as const;
 export const BATTING_STYLES = ["Right-hand bat", "Left-hand bat"];
 export const BOWLING_STYLES = [
   "Right-arm fast",

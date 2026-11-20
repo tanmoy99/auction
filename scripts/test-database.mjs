@@ -35,6 +35,7 @@ for (const name of [
   "019_player_career",
   "020_player_accounts",
   "021_restart_match",
+  "022_auction_rounds",
 ]) {
   await db.exec(await readFile(`supabase/migrations/${name}.sql`, "utf8"));
   console.log(`PASS migration ${name}`);
@@ -424,6 +425,126 @@ await check("player profile: pending players hidden; tournaments linked by mobil
   assert.deepEqual(career.entries.map((e) => e.tournament).sort(), ["Second cup", "Test tournament"]);
   assert.ok(!JSON.stringify(career).includes("98111"), "phone number must never be returned");
   assert.equal((await as("anon", null, "select public.player_career($1) c", [pending])).rows[0].c, null);
+});
+await check("auction rounds: organiser only; random and automatic picks stay inside the chosen category / role", async () => {
+  const t5 = crypto.randomUUID();
+  await db.query("insert into public.tournaments(id,organiser_id,name) values($1,$2,'Rounds cup')", [t5, ids.org]);
+  const add = async (name, category, role) =>
+    (await db.query("insert into public.players(tournament_id,name,base_price,category,role) values($1,$2,500,$3,$4) returning id", [t5, name, category, role]))
+      .rows[0].id;
+  const aBat1 = await add("A bat one", "A", "Batsman");
+  const aBat2 = await add("A bat two", " a ", "batsman"); // spacing / case from a spreadsheet
+  const aBowl = await add("A bowl", "A", "Bowler");
+  const bBowl = await add("B bowl", "B", "Bowler");
+  const noCat = await add("No category", null, "Batsman");
+  const state = async () => (await db.query("select * from public.auction_state where tournament_id=$1", [t5])).rows[0];
+  const setPool = (cats, roles, who = ids.org) => as("authenticated", who, "select public.set_auction_pool($1,$2,$3)", [t5, cats, roles]);
+
+  // before any round is chosen nothing changes: everyone can come up
+  assert.equal((await state()).pool_categories, null);
+  assert.equal((await state()).pool_roles, null);
+  await assert.rejects(setPool(["A"], null, ids.other), /organiser/);
+  await assert.rejects(as("anon", null, "select public.set_auction_pool($1,$2,$3)", [t5, ["A"], null]));
+
+  await setPool(["a"], ["BOWLER"]);
+  let s = await state();
+  assert.deepEqual(s.pool_categories, ["a"]);
+  assert.equal(s.next_player_id, aBowl, "only A bowler fits");
+  await as("authenticated", ids.org, "select public.start_player($1,$2)", [t5, aBowl]);
+  assert.equal((await state()).next_player_id, null, "nobody else is in this round");
+  await as("authenticated", ids.org, "select public.close_player($1)", [t5]);
+  await db.query("update public.auction_state set updated_at=now()-interval '1 minute' where tournament_id=$1", [t5]);
+  await db.query("select public.auction_tick($1)", [t5]);
+  s = await state();
+  assert.equal(s.phase, "idle", "round finished: auction waits for the organiser instead of bringing a B player");
+
+  // batsmen of category A only: never B, never the player without category
+  await setPool(["A"], ["Batsman"]);
+  for (let i = 0; i < 25; i++) {
+    const id = (await db.query("select public.pick_next_player($1,null) id", [t5])).rows[0].id;
+    assert.ok([aBat1, aBat2].includes(id), "picked outside the round");
+  }
+  // a hand-picked next player inside the round is kept, outside the round is replaced
+  await as("authenticated", ids.org, "select public.set_next_player($1,$2)", [t5, aBat2]);
+  await setPool(["A", "B"], ["Batsman"]);
+  assert.equal((await state()).next_player_id, aBat2);
+  await setPool(["B"], null);
+  assert.equal((await state()).next_player_id, bBowl);
+  // roles only, then clear: empty lists mean everyone again
+  await setPool([], ["Batsman"]);
+  s = await state();
+  assert.equal(s.pool_categories, null);
+  assert.ok([aBat1, aBat2, noCat].includes(s.next_player_id));
+  await setPool([], []);
+  s = await state();
+  assert.equal(s.pool_roles, null);
+  assert.ok([aBat1, aBat2, bBowl, noCat].includes(s.next_player_id));
+  // suspended tournaments cannot change rounds
+  await db.query("update public.tournaments set suspended=true where id=$1", [t5]);
+  await assert.rejects(setPool(["A"], null), /organiser|paused/);
+  await db.query("update public.tournaments set suspended=false where id=$1", [t5]);
+});
+await check("auction rounds: Under 19 / Local / Marquee / Ranji combined with player type", async () => {
+  const t6 = crypto.randomUUID();
+  await db.query("insert into public.tournaments(id,organiser_id,name) values($1,$2,'Local premier league')", [t6, ids.org]);
+  const made = {};
+  for (const cat of ["Under 19", "Local", "Marquee", "Ranji"])
+    for (const role of ["Batsman", "Bowler", "All-rounder", "Wicket-keeper"])
+      made[`${cat}|${role}`] = (
+        await db.query("insert into public.players(tournament_id,name,base_price,category,role) values($1,$2,500,$3,$4) returning id", [
+          t6,
+          `${cat} ${role}`,
+          cat,
+          role,
+        ])
+      ).rows[0].id;
+  const before = (await db.query("select count(*)::int n from public.players where tournament_id=$1", [t6])).rows[0].n;
+  const pick = async () => (await db.query("select public.pick_next_player($1,null) id", [t6])).rows[0].id;
+  const allowed = (cats, roles) => cats.flatMap((c) => roles.map((r) => made[`${c}|${r}`]));
+  const rounds = [
+    [["Under 19"], ["Batsman"]],
+    [["Under 19", "Ranji"], ["Bowler"]],
+    [["Marquee"], []],
+    [[], ["Wicket-keeper"]],
+    [["local"], ["batsman", "BOWLER"]],
+  ];
+  for (const [cats, roles] of rounds) {
+    await as("authenticated", ids.org, "select public.set_auction_pool($1,$2,$3)", [t6, cats, roles]);
+    const ok = allowed(
+      cats.length ? cats.map((c) => ["Under 19", "Local", "Marquee", "Ranji"].find((x) => x.toLowerCase() === c.toLowerCase())) : ["Under 19", "Local", "Marquee", "Ranji"],
+      roles.length ? roles.map((r) => ["Batsman", "Bowler", "All-rounder", "Wicket-keeper"].find((x) => x.toLowerCase() === r.toLowerCase())) : ["Batsman", "Bowler", "All-rounder", "Wicket-keeper"],
+    );
+    assert.ok(ok.includes((await db.query("select next_player_id from public.auction_state where tournament_id=$1", [t6])).rows[0].next_player_id));
+    for (let i = 0; i < 20; i++) assert.ok(ok.includes(await pick()), `round ${JSON.stringify([cats, roles])} picked outside`);
+  }
+  // running a whole round: Ranji bowlers + all-rounders come up, then the auction stops; nobody is deleted
+  await as("authenticated", ids.org, "select public.set_auction_pool($1,$2,$3)", [t6, ["Ranji"], ["Bowler", "All-rounder"]]);
+  const seen = [];
+  let next = (await db.query("select next_player_id from public.auction_state where tournament_id=$1", [t6])).rows[0].next_player_id;
+  await as("authenticated", ids.org, "select public.start_player($1,$2)", [t6, next]);
+  for (;;) {
+    const s = (await db.query("select * from public.auction_state where tournament_id=$1", [t6])).rows[0];
+    if (s.phase === "idle") break;
+    seen.push(s.player_id);
+    await as("authenticated", ids.org, "select public.close_player($1)", [t6]);
+    await db.query("update public.auction_state set updated_at=now()-interval '1 minute' where tournament_id=$1", [t6]);
+    await db.query("select public.auction_tick($1)", [t6]);
+  }
+  assert.deepEqual(seen.sort(), [made["Ranji|Bowler"], made["Ranji|All-rounder"]].sort());
+  assert.equal((await db.query("select count(*)::int n from public.players where tournament_id=$1", [t6])).rows[0].n, before);
+});
+await check("migration 022 re-run keeps every player, team, bid and auction row unchanged", async () => {
+  const snapshot = async () =>
+    JSON.stringify(
+      await Promise.all(
+        ["players", "teams", "bids", "auction_state", "tournaments", "matches"].map(
+          async (tbl) => (await db.query(`select * from public.${tbl} order by 1`)).rows,
+        ),
+      ),
+    );
+  const before = await snapshot();
+  await db.exec(await readFile("supabase/migrations/022_auction_rounds.sql", "utf8"));
+  assert.equal(await snapshot(), before);
 });
 console.log(`${passed} database checks passed (embedded PostgreSQL; hosted Auth/Storage/Realtime and scheduler untested)`);
 await db.close();

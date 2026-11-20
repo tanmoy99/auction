@@ -14,10 +14,28 @@ export function upNext(players: Player[], state: AuctionState | null) {
   return p && (p.status === "available" || p.status === "unsold") && p.id !== state?.player_id ? p : null;
 }
 
+const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
+
+// Is the player part of the auction round the organiser picked? (same rule as public.in_auction_pool)
+export function inRound(p: Pick<Player, "category" | "role">, state: Pick<AuctionState, "pool_categories" | "pool_roles"> | null) {
+  const cats = state?.pool_categories ?? [];
+  const roles = state?.pool_roles ?? [];
+  return (!cats.length || cats.some((c) => norm(c) === norm(p.category))) && (!roles.length || roles.some((r) => norm(r) === norm(p.role)));
+}
+
+// "Category A · Bowlers" or null when every player is in the round
+export function roundLabel(state: Pick<AuctionState, "pool_categories" | "pool_roles"> | null) {
+  const cats = state?.pool_categories ?? [];
+  const roles = state?.pool_roles ?? [];
+  if (!cats.length && !roles.length) return null;
+  return [cats.length ? `Category ${cats.join(", ")}` : null, roles.length ? roles.join(", ") : null].filter(Boolean).join(" · ");
+}
+
 // One-line "Up next" strip for under the stage
 export function UpNext({ players, state, dark }: { players: Player[]; state: AuctionState | null; dark?: boolean }) {
   const next = upNext(players, state);
-  const left = players.filter((p) => p.status === "available" && p.id !== state?.player_id).length;
+  const left = players.filter((p) => p.status === "available" && p.id !== state?.player_id && inRound(p, state)).length;
+  const round = roundLabel(state);
   return (
     <div
       className={cn(
@@ -37,9 +55,14 @@ export function UpNext({ players, state, dark }: { players: Player[]; state: Auc
           </div>
         </>
       ) : (
-        <p className={cn("flex-1 text-sm", dark ? "text-white/60" : "text-slate-500")}>{left ? "Random pick from the pool" : "No players left"}</p>
+        <p className={cn("flex-1 text-sm", dark ? "text-white/60" : "text-slate-500")}>
+          {left ? "Random pick from the pool" : round ? "No players left in this round" : "No players left"}
+        </p>
       )}
-      <span className={cn("shrink-0 text-xs", dark ? "text-white/40" : "text-slate-400")}>{left} left</span>
+      <span className={cn("shrink-0 text-right text-xs", dark ? "text-white/40" : "text-slate-400")}>
+        {round && <span className={cn("block font-semibold", dark ? "text-amber-300" : "text-sky-700")}>{round}</span>}
+        {left} left
+      </span>
     </div>
   );
 }

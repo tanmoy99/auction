@@ -8,7 +8,7 @@ import { mobileKey } from "@/lib/config";
 import { errorMessage } from "@/lib/format";
 import { uploadPhoto } from "@/lib/image";
 import { supabase } from "@/lib/supabase";
-import type { Player, Tournament } from "@/lib/types";
+import { CATEGORY_SUGGESTIONS, type Player, type Tournament } from "@/lib/types";
 
 export function PlayerModal({
   tournament,
@@ -93,8 +93,29 @@ export function PlayerModal({
           <Field label="Base price (Rs)">
             <Input type="number" min={1} value={basePrice} onChange={(e) => setBasePrice(e.target.value)} required />
           </Field>
-          <Field label="Category" hint="Optional, e.g. A / B / Icon">
-            <Input value={category} onChange={(e) => setCategory(e.target.value)} />
+          <Field label="Category" hint="Optional, e.g. Under 19 / Local / Marquee / Ranji. The auction can run one category at a time.">
+            <Input value={category} onChange={(e) => setCategory(e.target.value)} list="player-category-suggestions" />
+            <datalist id="player-category-suggestions">
+              {CATEGORY_SUGGESTIONS.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {CATEGORY_SUGGESTIONS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setCategory(category === c ? "" : c)}
+                  className={
+                    category === c
+                      ? "rounded-full bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white"
+                      : "rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-200"
+                  }
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
           </Field>
         </div>
         <div className="flex justify-end gap-2 pt-2">

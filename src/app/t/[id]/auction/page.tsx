@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Flag,
   Gavel,
+  Layers,
   MessageCircle,
   Pause,
   Play,
@@ -26,14 +27,14 @@ import {
   X,
 } from "lucide-react";
 import { BidHistory, PlayerStage, TimerHint } from "@/components/auction";
-import { UpNext, upNext } from "@/components/player-board";
+import { UpNext, inRound, roundLabel, upNext } from "@/components/player-board";
 import { useTournament } from "@/components/tournament-context";
 import { toast } from "@/components/toast";
 import { Avatar, Button, Card, Input, TeamDot, cn } from "@/components/ui";
 import { errorMessage, maxBid, nextBid, rupees } from "@/lib/format";
 import { useAuctionDriver, useCountdown, useServerOffset } from "@/lib/hooks";
 import { supabase } from "@/lib/supabase";
-import type { Player } from "@/lib/types";
+import { ROLES, type Player } from "@/lib/types";
 
 function pickRandom<T>(items: T[]) {
   return items[Math.floor(Math.random() * items.length)]!;
@@ -78,7 +79,13 @@ export default function AuctionControlPage() {
   const next = upNext(players, state);
   const available = players.filter((p) => p.status === "available");
   const unsold = players.filter((p) => p.status === "unsold");
-  const queue = (queueTab === "available" ? available : unsold).filter((p) => p.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const round = roundLabel(state);
+  const roundAvailable = available.filter((p) => inRound(p, state));
+  const roundUnsold = unsold.filter((p) => inRound(p, state));
+  const [showAll, setShowAll] = useState(false);
+  const queue = (queueTab === "available" ? available : unsold)
+    .filter((p) => showAll || inRound(p, state))
+    .filter((p) => p.name.toLowerCase().includes(query.trim().toLowerCase()));
 
   async function call(key: string, fn: string, args: Record<string, unknown>, success?: string) {
     setBusy(key);
@@ -94,8 +101,8 @@ export default function AuctionControlPage() {
 
   function startNext() {
     if (next) return start(next);
-    const pool = available.length ? available : unsold;
-    if (!pool.length) return toast("No players left in the pool", "info");
+    const pool = roundAvailable.length ? roundAvailable : roundUnsold;
+    if (!pool.length) return toast(round ? "No players left in this round. Pick another category or type." : "No players left in the pool", "info");
     start(pickRandom(pool));
   }
 
@@ -111,7 +118,7 @@ export default function AuctionControlPage() {
   // countdown to the next player while the SOLD / UNSOLD result is showing
   const showingResult = state?.phase === "sold" || state?.phase === "unsold";
   const nextAt =
-    showingResult && t.auto_next && available.length > 0
+    showingResult && t.auto_next && (!!next || roundAvailable.length > 0)
       ? new Date(new Date(state!.updated_at).getTime() + t.result_pause_seconds * 1000).toISOString()
       : null;
   const nextIn = useCountdown(nextAt, offset);
@@ -143,7 +150,7 @@ export default function AuctionControlPage() {
               <div className="min-w-0 flex-1">
                 <UpNext players={players} state={state} />
               </div>
-              <Button variant="secondary" onClick={() => setNext(null)} loading={busy === "shuffle"} disabled={available.length < 2} title="Pick a different random player">
+              <Button variant="secondary" onClick={() => setNext(null)} loading={busy === "shuffle"} disabled={roundAvailable.length < 2} title="Pick a different random player from this round">
                 <Shuffle className="size-4" />
                 <span className="hidden sm:inline">Shuffle</span>
               </Button>
@@ -184,7 +191,7 @@ export default function AuctionControlPage() {
                 </>
               ) : (
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button size="lg" className="flex-1" onClick={startNext} disabled={!available.length && !unsold.length} loading={busy?.startsWith("start")}>
+                  <Button size="lg" className="flex-1" onClick={startNext} disabled={!next && !roundAvailable.length && !roundUnsold.length} loading={busy?.startsWith("start")}>
                     <Shuffle className="size-5" />
                     {nextIn != null
                       ? `${next?.name ?? "Next player"} in ${Math.ceil(nextIn)}s · bring now`
@@ -200,8 +207,11 @@ export default function AuctionControlPage() {
                     </Button>
                   )}
                   <p className="w-full text-center text-xs text-slate-500">
-                    {available.length} in pool · {unsold.length} unsold
-                    {available.length === 0 && unsold.length > 0 && " · pool finished, bring unsold players back from the Unsold tab"}
+                    {round
+                      ? `${roundAvailable.length} in this round · ${roundUnsold.length} unsold · ${available.length} in pool overall`
+                      : `${available.length} in pool · ${unsold.length} unsold`}
+                    {roundAvailable.length === 0 && roundUnsold.length > 0 && " · pool finished, bring unsold players back from the Unsold tab"}
+                    {round && roundAvailable.length === 0 && roundUnsold.length === 0 && " · round finished, pick another category or type below"}
                   </p>
                 </div>
               )}
@@ -257,6 +267,7 @@ export default function AuctionControlPage() {
             )}
           </>
         )}
+        {t.status !== "completed" && <RoundPicker busy={busy} call={call} />}
         {t.status !== "completed" && (
           <Card>
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
@@ -276,6 +287,14 @@ export default function AuctionControlPage() {
                 <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find player" className="h-9 pl-9" />
               </div>
             </div>
+            {round && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-sky-50 px-4 py-2 text-xs text-sky-800">
+                <span>{showAll ? "Showing every player" : <>Showing round: <b>{round}</b></>}</span>
+                <button className="font-semibold underline" onClick={() => setShowAll(!showAll)}>
+                  {showAll ? "Only this round" : "Show everyone"}
+                </button>
+              </div>
+            )}
             <ul className="max-h-[420px] divide-y divide-slate-100 overflow-y-auto">
               {queue.length === 0 && <li className="px-4 py-8 text-center text-sm text-slate-500">No players here</li>}
               {queue.map((p) => (
@@ -527,6 +546,77 @@ function AuctionStatusCard({ busy, call }: { busy: string | null; call: Call }) 
             <RotateCcw className="size-4" /> Reopen auction
           </Button>
         </div>
+      </div>
+    </Card>
+  );
+}
+
+// Auction round: limit random / automatic picks to some categories and/or playing roles
+function RoundPicker({ busy, call }: { busy: string | null; call: Call }) {
+  const { tournament: t, players, state } = useTournament();
+  const cats = state?.pool_categories ?? [];
+  const roles = state?.pool_roles ?? [];
+  const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
+  const left = players.filter((p) => p.status === "available" || p.status === "unsold");
+
+  // every category / role still waiting, first spelling wins; the standard roles are always offered
+  const options = (values: (string | null)[], always: readonly string[] = []) => {
+    const seen = new Map<string, string>();
+    for (const v of [...always, ...values]) if (v?.trim() && !seen.has(norm(v))) seen.set(norm(v), v.trim());
+    return [...seen.values()];
+  };
+  const categoryOptions = options(left.map((p) => p.category)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const roleOptions = options(left.map((p) => p.role), ROLES);
+  const count = (field: "category" | "role", value: string) => left.filter((p) => norm(p[field]) === norm(value)).length;
+  const inThisRound = left.filter((p) => inRound(p, state)).length;
+
+  const save = (nextCats: string[], nextRoles: string[], message: string) =>
+    call("round", "set_auction_pool", { p_tournament: t.id, p_categories: nextCats, p_roles: nextRoles }, message);
+  const toggle = (list: string[], value: string) =>
+    list.some((x) => norm(x) === norm(value)) ? list.filter((x) => norm(x) !== norm(value)) : [...list, value];
+
+  const chip = (active: boolean, label: string, n: number | null, onClick: () => void) => (
+    <button
+      key={label}
+      type="button"
+      disabled={busy === "round"}
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "rounded-full border px-3 py-1 text-xs font-medium transition disabled:opacity-60",
+        active ? "border-emerald-600 bg-emerald-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-emerald-400",
+      )}
+    >
+      {label}
+      {n != null && <span className={active ? "text-emerald-100" : "text-slate-400"}> {n}</span>}
+    </button>
+  );
+
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+          <Layers className="size-4 text-slate-400" /> Auction round
+        </h3>
+        <span className="text-xs text-slate-500">
+          {roundLabel(state) ? `${inThisRound} player${inThisRound === 1 ? "" : "s"} in this round` : "All players"}
+        </span>
+      </div>
+      <p className="mt-1 text-xs text-slate-500">
+        Pick a category and / or player type. Random and automatic players then come only from this group. Tap again to remove.
+      </p>
+
+      <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Category</p>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {chip(cats.length === 0, "All", null, () => cats.length && save([], roles, "All categories"))}
+        {categoryOptions.map((c) => chip(cats.some((x) => norm(x) === norm(c)), c, count("category", c), () => save(toggle(cats, c), roles, "Round updated")))}
+        {categoryOptions.length === 0 && <span className="text-xs text-slate-400">No categories set on players (add one in Players or the import sheet)</span>}
+      </div>
+
+      <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Player type</p>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {chip(roles.length === 0, "All", null, () => roles.length && save(cats, [], "All player types"))}
+        {roleOptions.map((r) => chip(roles.some((x) => norm(x) === norm(r)), r, count("role", r), () => save(cats, toggle(roles, r), "Round updated")))}
       </div>
     </Card>
   );
