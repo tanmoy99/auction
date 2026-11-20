@@ -6,7 +6,8 @@ import { useParams } from "next/navigation";
 import { CheckCircle2, MapPin } from "lucide-react";
 import { Logo } from "@/components/app-header";
 import { PlayerFields, emptyPlayerForm, type PlayerFormValues } from "@/components/player-fields";
-import { Button, PageLoader } from "@/components/ui";
+import { Button, Field, PageLoader, Select } from "@/components/ui";
+import { PLAYER_CATEGORIES } from "@/lib/types";
 import { errorMessage } from "@/lib/format";
 import { compressImage } from "@/lib/image";
 import { supabase } from "@/lib/supabase";
@@ -17,6 +18,7 @@ export default function RegisterPage() {
   const { token } = useParams<{ token: string }>();
   const [info, setInfo] = useState<Info | null | undefined>(undefined);
   const [values, setValues] = useState<PlayerFormValues>(emptyPlayerForm);
+  const [category, setCategory] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -33,6 +35,7 @@ export default function RegisterPage() {
     e.preventDefault();
     setError("");
     if (values.phone.replace(/\D/g, "").length < 10) return setError("Please enter a valid 10-digit mobile number");
+    if (!category) return setError("Please choose your player category");
     setSaving(true);
     try {
       const body = new FormData();
@@ -43,6 +46,7 @@ export default function RegisterPage() {
       body.set("Bowling style", values.bowling_style);
       body.set("Age", values.age);
       body.set("City", values.city);
+      body.set("Category", category);
       if (photo) body.set("photo", await compressImage(photo), "photo.jpg");
       const res = await fetch(`/api/register/${token}`, { method: "POST", body });
       const json = await res.json();
@@ -79,6 +83,16 @@ export default function RegisterPage() {
             setPreview(URL.createObjectURL(file));
           }}
         />
+        <Field label="Player category *" hint="If more than one fits, choose the one that describes you best. The organiser can change it later.">
+          <Select value={category} onChange={(e) => setCategory(e.target.value)} required>
+            <option value="">Select category</option>
+            {PLAYER_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </Select>
+        </Field>
         {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
         <Button type="submit" size="lg" className="w-full" loading={saving}>
           Register

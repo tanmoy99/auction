@@ -104,3 +104,11 @@ test("public team join requires a phone and owner exemption requires an active o
   fixture({ user: { id: "owner" }, pausedUser: true }); const paused = json(valid); paused.headers.set("authorization", "Bearer test");
   assert.equal((await join(paused, ctx)).status, 403);
 });
+test("registration form category reaches the RPC; U19 / ranji / amature spellings map to the standard names", async () => {
+  for (const [sent, expected] of [["Local player", "Local player"], ["Outside player", "Outside player"], ["U-19", "Under 19 player"], ["ranji", "Ranji / State player"], ["State level", "Ranji / State player"], ["Amature", "Amateur player"], ["Ameture", "Amateur player"], ["Professional", "Professional player"], ["non-local", "Outside player"], ["Icon", null], ["A", null], [undefined, null]]) {
+    const state = fixture();
+    const body = new FormData(); body.set("Name", "Ravi"); body.set("Phone", "9876543210"); if (sent) body.set("Category", sent);
+    assert.equal((await register(new Request("http://localhost", { method: "POST", body }), ctx)).status, 200);
+    assert.equal(state.calls.find(c => c.name === "register_player").args.p_player.category, expected);
+  }
+});

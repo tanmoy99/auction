@@ -9,7 +9,7 @@ import { normalisePhone, validatePlayer } from "@/lib/registration-validation";
 import { TEMPLATE_HEADERS, describeColumns, mapRow, type ImportedPlayer } from "@/lib/fields";
 import { errorMessage, rupees } from "@/lib/format";
 import { authHeader, supabase } from "@/lib/supabase";
-import type { Tournament } from "@/lib/types";
+import { ORGANISER_CATEGORIES, type Tournament } from "@/lib/types";
 
 const FIELD_LABELS: Record<string, string> = {
   name: "Name", phone: "Phone", role: "Role", batting_style: "Batting", bowling_style: "Bowling",
@@ -34,6 +34,9 @@ export function ImportModal({
   const [rows, setRows] = useState<ImportedPlayer[] | null>(null);
   const [columns, setColumns] = useState<{ header: string; field: string | null }[]>([]);
   const [skipped, setSkipped] = useState(0);
+  // category values from the sheet that are not in the locked list (imported as no category)
+  const [unknownCategories, setUnknownCategories] = useState<string[]>([]);
+  const [noCategory, setNoCategory] = useState(0);
   const [busy, setBusy] = useState(false);
 
   async function parseWorkbook(wb: WorkBook) {
@@ -41,7 +44,10 @@ export function ImportModal({
     const sheet = wb.Sheets[wb.SheetNames[0]!]!;
     const records = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: false });
     if (records.length === 0) throw new Error("The sheet is empty");
-    setColumns(describeColumns(Object.keys(records[0]!)));
+    const cols = describeColumns(Object.keys(records[0]!));
+    setColumns(cols);
+    const categoryHeader = cols.find((c) => c.field === "category")?.header;
+    const unknown = new Set<string>();
 
     const seen = new Set(existingPhones.map(digits).filter(Boolean));
     const out: ImportedPlayer[] = [];
@@ -57,9 +63,13 @@ export function ImportModal({
         continue;
       }
       if (key) seen.add(key);
+      const raw = categoryHeader ? String(record[categoryHeader] ?? "").trim() : "";
+      if (raw && !p.category) unknown.add(raw);
       out.push(p);
     }
     setSkipped(dupes);
+    setUnknownCategories([...unknown]);
+    setNoCategory(out.filter((p) => !p.category).length);
     setRows(out);
   }
 
@@ -95,7 +105,7 @@ export function ImportModal({
     const XLSX = await import("xlsx");
     const ws = XLSX.utils.aoa_to_sheet([
       TEMPLATE_HEADERS,
-      ["Rahul Sharma", "9876543210", "All-rounder", "Right-hand bat", "Right-arm medium", 24, "Barasat", "", "A", tournament.base_price],
+      ["Rahul Sharma", "9876543210", "All-rounder", "Right-hand bat", "Right-arm medium", 24, "Barasat", "", "Local player", tournament.base_price],
     ]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Players");
@@ -183,11 +193,18 @@ export function ImportModal({
             <b>{rows.length}</b> players ready to import
             {skipped > 0 && <> · {skipped} skipped (phone number already exists)</>}
           </p>
+          {noCategory > 0 && (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {noCategory} player{noCategory > 1 ? "s have" : " has"} no category from the list
+              {unknownCategories.length > 0 && <> (not in the list: {unknownCategories.slice(0, 6).map((c) => `"${c}"`).join(", ")}{unknownCategories.length > 6 && " ..."})</>}
+              . They are imported without a category; set it later in Players. Allowed: {ORGANISER_CATEGORIES.join(", ")}.
+            </p>
+          )}
           <div className="max-h-80 overflow-auto rounded-lg border border-slate-200">
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
-                  {["Name", "Phone", "Role", "City", "Age", "Base price"].map((h) => (
+                  {["Name", "Phone", "Role", "Category", "City", "Age", "Base price"].map((h) => (
                     <th key={h} className="px-3 py-2 font-medium">
                       {h}
                     </th>
@@ -200,6 +217,7 @@ export function ImportModal({
                     <td className="px-3 py-2 font-medium text-slate-800">{r.name}</td>
                     <td className="px-3 py-2 text-slate-600">{r.phone}</td>
                     <td className="px-3 py-2 text-slate-600">{r.role}</td>
+                    <td className={cn("px-3 py-2", r.category ? "text-slate-600" : "text-amber-600")}>{r.category ?? "None"}</td>
                     <td className="px-3 py-2 text-slate-600">{r.city}</td>
                     <td className="px-3 py-2 text-slate-600">{r.age}</td>
                     <td className="px-3 py-2 text-slate-600">{rupees(r.base_price ?? tournament.base_price)}</td>

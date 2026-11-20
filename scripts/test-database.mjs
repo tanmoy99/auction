@@ -36,6 +36,8 @@ for (const name of [
   "020_player_accounts",
   "021_restart_match",
   "022_auction_rounds",
+  "023_registration_category",
+  "024_registration_categories_v2",
 ]) {
   await db.exec(await readFile(`supabase/migrations/${name}.sql`, "utf8"));
   console.log(`PASS migration ${name}`);
@@ -533,17 +535,42 @@ await check("auction rounds: Under 19 / Local / Marquee / Ranji combined with pl
   assert.deepEqual(seen.sort(), [made["Ranji|Bowler"], made["Ranji|All-rounder"]].sort());
   assert.equal((await db.query("select count(*)::int n from public.players where tournament_id=$1", [t6])).rows[0].n, before);
 });
-await check("migration 022 re-run keeps every player, team, bid and auction row unchanged", async () => {
+await check("registration saves only the 6 player categories; Special, other or missing values save no category", async () => {
+  const t7 = crypto.randomUUID(),
+    token7 = crypto.randomUUID();
+  await db.query("insert into public.tournaments(id,organiser_id,name,registration_token) values($1,$2,'Category cup',$3)", [t7, ids.org, token7]);
+  const reg = async (phone, category) => {
+    const r = (await db.query("select public.register_player($1,$2,'web') r", [token7, { name: `Reg ${phone}`, phone, category }])).rows[0].r;
+    return (await db.query("select category, status from public.players where id=$1", [r.id])).rows[0];
+  };
+  assert.deepEqual(await reg("9800000001", "Outside player"), { category: "Outside player", status: "pending" });
+  assert.equal((await reg("9800000002", "Local player")).category, "Local player");
+  assert.equal((await reg("9800000003", "  ranji / STATE player ")).category, "Ranji / State player");
+  assert.equal((await reg("9800000004", "Under 19 player")).category, "Under 19 player");
+  assert.equal((await reg("9800000005", "Captain of the world")).category, null, "unknown category is not stored");
+  assert.equal((await reg("9800000007", "Special player")).category, null, "players cannot make themselves Special");
+  assert.equal((await reg("9800000008", "Amateur player")).category, "Amateur player");
+  assert.equal((await reg("9800000009", "Professional player")).category, "Professional player");
+  assert.equal((await reg("9800000006", undefined)).category, null, "older forms without a category still register");
+  // a registered category works with auction rounds once the organiser approves the player
+  await db.query("update public.players set status='available' where tournament_id=$1", [t7]);
+  await as("authenticated", ids.org, "select public.set_auction_pool($1,$2,$3)", [t7, ["Under 19 player"], null]);
+  const next = (await db.query("select p.name from public.auction_state s join public.players p on p.id=s.next_player_id where s.tournament_id=$1", [t7])).rows[0];
+  assert.equal(next.name, "Reg 9800000004");
+});
+await check("migrations 022, 023 and 024 re-run keep every player, team, bid and auction row unchanged", async () => {
   const snapshot = async () =>
     JSON.stringify(
       await Promise.all(
-        ["players", "teams", "bids", "auction_state", "tournaments", "matches"].map(
-          async (tbl) => (await db.query(`select * from public.${tbl} order by 1`)).rows,
+        ["players", "player_contacts", "teams", "bids", "auction_state", "tournaments", "matches"].map(
+          async (tbl) => (await db.query(`select * from public.${tbl} order by 1, 2`)).rows,
         ),
       ),
     );
   const before = await snapshot();
   await db.exec(await readFile("supabase/migrations/022_auction_rounds.sql", "utf8"));
+  await db.exec(await readFile("supabase/migrations/023_registration_category.sql", "utf8"));
+  await db.exec(await readFile("supabase/migrations/024_registration_categories_v2.sql", "utf8"));
   assert.equal(await snapshot(), before);
 });
 console.log(`${passed} database checks passed (embedded PostgreSQL; hosted Auth/Storage/Realtime and scheduler untested)`);

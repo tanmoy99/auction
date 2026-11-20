@@ -104,8 +104,18 @@ export type Bid = {
 };
 
 export const ROLES = ["Batsman", "Bowler", "All-rounder", "Wicket-keeper"] as const;
-// Common player categories in local tournaments (any other text works too)
-export const CATEGORY_SUGGESTIONS = ["Under 19", "Local", "Marquee", "Ranji"] as const;
+// Categories a player can pick when they register. Keep in sync with public.register_player (migration 024).
+export const PLAYER_CATEGORIES = [
+  "Local player",
+  "Outside player",
+  "Under 19 player",
+  "Ranji / State player",
+  "Amateur player",
+  "Professional player",
+] as const;
+// The organiser also has "Special player" (icon / marquee), which players cannot choose themselves.
+// Categories are locked to this list everywhere (forms and imports).
+export const ORGANISER_CATEGORIES = [...PLAYER_CATEGORIES, "Special player"] as const;
 export const BATTING_STYLES = ["Right-hand bat", "Left-hand bat"];
 export const BOWLING_STYLES = [
   "Right-arm fast",

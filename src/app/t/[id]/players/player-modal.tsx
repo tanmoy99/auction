@@ -3,12 +3,13 @@
 import { useState } from "react";
 import { PlayerFields, emptyPlayerForm, type PlayerFormValues } from "@/components/player-fields";
 import { toast } from "@/components/toast";
-import { Button, Field, Input, Modal } from "@/components/ui";
+import { Button, Field, Input, Modal, Select } from "@/components/ui";
 import { mobileKey } from "@/lib/config";
+import { normaliseCategory } from "@/lib/fields";
 import { errorMessage } from "@/lib/format";
 import { uploadPhoto } from "@/lib/image";
 import { supabase } from "@/lib/supabase";
-import { CATEGORY_SUGGESTIONS, type Player, type Tournament } from "@/lib/types";
+import { ORGANISER_CATEGORIES as CATEGORY_SUGGESTIONS, type Player, type Tournament } from "@/lib/types";
 
 export function PlayerModal({
   tournament,
@@ -40,7 +41,10 @@ export function PlayerModal({
       : emptyPlayerForm,
   );
   const [basePrice, setBasePrice] = useState(String(player?.base_price ?? tournament.base_price));
-  const [category, setCategory] = useState(player?.category ?? "");
+  // Locked to the category list. An old category is matched to the list when possible (U-19 -> Under 19 player);
+  // otherwise the organiser has to choose one before saving.
+  const oldCategory = player?.category ?? null;
+  const [category, setCategory] = useState<string>(() => normaliseCategory(oldCategory) ?? "");
   const [photo, setPhoto] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -56,6 +60,7 @@ export function PlayerModal({
     if (values.phone.trim() && !mobile) return toast("Enter a 10-digit Indian mobile number, or leave it empty", "error");
     const other = mobile ? takenBy?.(mobile) : undefined;
     if (other) return toast(`This mobile number is already used by ${other} in this tournament`, "error");
+    if (!category) return toast("Choose a player category", "error");
     setSaving(true);
     try {
       const photo_url = photo ? await uploadPhoto(tournament.id, photo) : values.photo_url || null;
@@ -67,7 +72,7 @@ export function PlayerModal({
         age: values.age ? Number(values.age) : null,
         city: values.city.trim() || null,
         photo_url,
-        category: category.trim() || null,
+        category,
         base_price: Number(basePrice),
       };
       const { error } = await supabase.rpc("save_player_contact", {
@@ -93,29 +98,22 @@ export function PlayerModal({
           <Field label="Base price (Rs)">
             <Input type="number" min={1} value={basePrice} onChange={(e) => setBasePrice(e.target.value)} required />
           </Field>
-          <Field label="Category" hint="Optional, e.g. Under 19 / Local / Marquee / Ranji. The auction can run one category at a time.">
-            <Input value={category} onChange={(e) => setCategory(e.target.value)} list="player-category-suggestions" />
-            <datalist id="player-category-suggestions">
+          <Field
+            label="Category *"
+            hint={
+              oldCategory && oldCategory !== category && !normaliseCategory(oldCategory)
+                ? `Old category "${oldCategory}" is not in the list. Choose one.`
+                : "The auction can run one category at a time."
+            }
+          >
+            <Select value={category} onChange={(e) => setCategory(e.target.value)} required>
+              <option value="">Select category</option>
               {CATEGORY_SUGGESTIONS.map((c) => (
-                <option key={c} value={c} />
-              ))}
-            </datalist>
-            <div className="mt-1.5 flex flex-wrap gap-1">
-              {CATEGORY_SUGGESTIONS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setCategory(category === c ? "" : c)}
-                  className={
-                    category === c
-                      ? "rounded-full bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white"
-                      : "rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-200"
-                  }
-                >
+                <option key={c} value={c}>
                   {c}
-                </button>
+                </option>
               ))}
-            </div>
+            </Select>
           </Field>
         </div>
         <div className="flex justify-end gap-2 pt-2">
